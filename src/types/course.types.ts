@@ -25,6 +25,10 @@ export interface Lesson {
   notes: string;
   isFree: boolean;
   order: number;
+  // HLS Quality fields (returned when ?signed=true)
+  qualityUrls?: Record<string, string>;
+  hlsQualities?: string[];
+  hlsStatus?: string;
 }
 
 export interface Module {

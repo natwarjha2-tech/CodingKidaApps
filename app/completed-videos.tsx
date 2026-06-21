@@ -51,7 +51,10 @@ export default function CompletedVideosScreen() {
                 activeOpacity={0.7}
               >
                 <View style={styles.courseHeader}>
-                  <Text style={styles.courseIcon}>{course.icon || '📘'}</Text>
+                  <View style={styles.courseIconWrap}>
+                    <View style={styles.courseIconGlow} />
+                    <Text style={styles.courseIcon}>📖</Text>
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.courseTitle}>{course.title}</Text>
                     <Text style={styles.courseMeta}>
@@ -135,7 +138,24 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
-  courseIcon: { fontSize: 22 },
+  courseIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#4C26A8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  courseIconGlow: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(108,71,255,0.4)',
+  },
+  courseIcon: { fontSize: 22, zIndex: 1 },
   courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 2 },
   courseMeta: { color: Colors.muted, fontSize: 12 },
   percent: { fontSize: 16, fontWeight: '800' },

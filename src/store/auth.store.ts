@@ -9,6 +9,7 @@ interface AuthStore {
   setAuth: (token: string, user: User) => void;
   clearAuth: () => void;
   setLoading: (loading: boolean) => void;
+  updateUser: (updates: Partial<User>) => void;
 }
 
 export const useAuthStore = create<AuthStore>((set) => ({
@@ -24,4 +25,9 @@ export const useAuthStore = create<AuthStore>((set) => ({
     set({ token: null, user: null, isAuthenticated: false, isLoading: false }),
 
   setLoading: (isLoading) => set({ isLoading }),
+
+  updateUser: (updates) =>
+    set((state) => ({
+      user: state.user ? { ...state.user, ...updates } : state.user,
+    })),
 }));

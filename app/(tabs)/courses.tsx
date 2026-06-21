@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCourses } from '@/hooks';
+import { coursesApi } from '@/api';
 import { Colors } from '@/theme';
 
 export default function CoursesScreen() {
@@ -11,8 +13,20 @@ export default function CoursesScreen() {
   const { data, isLoading } = useCourses(category, search);
   const courses = data?.courses ?? [];
 
-  // Derive categories dynamically from fetched courses (when "All" is selected and no search)
   const { data: allData } = useCourses('All', '');
+  const queryClient = useQueryClient();
+
+  // Prefetch each course detail when list loads — instant open on tap
+  useEffect(() => {
+    const allCourses = allData?.courses ?? [];
+    for (const course of allCourses) {
+      queryClient.prefetchQuery({
+        queryKey: ['course', course.id],
+        queryFn: () => coursesApi.getById(course.id),
+        staleTime: 1000 * 60 * 2,
+      });
+    }
+  }, [allData]);
   const categories = useMemo(() => {
     const allCourses = allData?.courses ?? [];
     const uniqueCats = [...new Set(allCourses.map((c) => c.category).filter(Boolean))];
@@ -29,44 +43,47 @@ export default function CoursesScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Page Header — exact desktop gradient style */}
-      <View style={styles.pageHeader}>
-        <Text style={styles.pageTitle}>Explore Courses</Text>
-        <Text style={styles.pageSubtitle}>Learn from 200+ expert-led courses and level up your skills.</Text>
-      </View>
+      {/* Fixed Header Section (does not scroll) */}
+      <View>
+        {/* Page Header */}
+        <View style={styles.pageHeader}>
+          <Text style={styles.pageTitle}>Explore Courses</Text>
+          <Text style={styles.pageSubtitle}>Learn from 200+ expert-led courses and level up your skills.</Text>
+        </View>
 
-      {/* Search — exact desktop style */}
-      <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔍</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="What do you want to learn today?"
-          placeholderTextColor={Colors.muted}
-          value={search}
-          onChangeText={setSearch}
+        {/* Search */}
+        <View style={styles.searchWrap}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="What do you want to learn today?"
+            placeholderTextColor={Colors.muted}
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
+
+        {/* Category Filter */}
+        <FlatList
+          horizontal
+          data={categories}
+          keyExtractor={(item) => item}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryList}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.filterTab, category === item && styles.filterTabActive]}
+              onPress={() => setCategory(item)}
+            >
+              <Text style={[styles.filterTabText, category === item && styles.filterTabTextActive]}>
+                {item}
+              </Text>
+            </TouchableOpacity>
+          )}
         />
       </View>
 
-      {/* Category Filter — exact desktop filter-tab style */}
-      <FlatList
-        horizontal
-        data={categories}
-        keyExtractor={(item) => item}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryList}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.filterTab, category === item && styles.filterTabActive]}
-            onPress={() => setCategory(item)}
-          >
-            <Text style={[styles.filterTabText, category === item && styles.filterTabTextActive]}>
-              {item}
-            </Text>
-          </TouchableOpacity>
-        )}
-      />
-
-      {/* Courses Grid — instant load, no loading state */}
+      {/* Courses Grid (scrolls independently below fixed header) */}
       <FlatList
           data={gridData}
           keyExtractor={(item) => item.id}
@@ -166,7 +183,7 @@ const styles = StyleSheet.create({
   filterTabTextActive: { color: '#fff' },
 
   // Course list
-  list: { paddingHorizontal: 12, paddingBottom: 32 },
+  list: { paddingHorizontal: 12, paddingBottom: 32, paddingTop: 8 },
   row: { gap: 12, marginBottom: 12 },
 
   // Course card — exact desktop #161B22 card style
@@ -180,8 +197,8 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   thumbGlow: {
-    position: 'absolute', width: 120, height: 120,
-    borderRadius: 60, backgroundColor: 'rgba(108,71,255,0.3)',
+    position: 'absolute', width: 100, height: 100, top: 10,
+    borderRadius: 50, backgroundColor: 'rgba(108,71,255,0.3)',
   },
   thumbIcon: { fontSize: 36, zIndex: 1 },
   categoryBadge: {

@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDashboard, useCoins } from '@/hooks';
+import { AttendanceService } from '@/services';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
 
@@ -10,8 +11,18 @@ export default function MyReportScreen() {
   const { data: dashData, isLoading: dashLoading } = useDashboard();
   const { data: coinsData, isLoading: coinsLoading } = useCoins();
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const [todayMins, setTodayMins] = useState(0);
+  const [weekMins, setWeekMins] = useState(0);
+  const [calendarDays, setCalendarDays] = useState<{ date: string; day: number; mins: number; active: boolean; isToday: boolean }[]>([]);
 
   const isLoading = dashLoading || coinsLoading;
+
+  // Load attendance data
+  useEffect(() => {
+    AttendanceService.getTodayMins().then(setTodayMins);
+    AttendanceService.getWeekMins().then(setWeekMins);
+    AttendanceService.getLast30Days().then(setCalendarDays);
+  }, []);
 
   const enrolledCourses = dashData?.enrolledCourses ?? [];
   const totalEnrolled = dashData?.enrolledCount ?? enrolledCourses.length;
@@ -35,24 +46,9 @@ export default function MyReportScreen() {
         )
       : 0;
 
-  // Generate 30-day calendar
-  const today = new Date();
-  const calendar = Array.from({ length: 30 }, (_, i) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() - (29 - i));
-    return {
-      day: date.getDate(),
-      date: date.toISOString().split('T')[0],
-      isToday: i === 29,
-    };
-  });
-
-  // Mark days as "active" based on total completed videos (spread across recent days)
-  const activeDaysCount = Math.min(totalVideosWatched, 30);
-  const activeCalendar = calendar.map((day, idx) => ({
-    ...day,
-    active: idx >= (30 - activeDaysCount),
-  }));
+  // Use real attendance calendar data
+  const activeCalendar = calendarDays;
+  const activeDaysCount = calendarDays.filter((d) => d.active).length;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -62,7 +58,13 @@ export default function MyReportScreen() {
           <Text style={styles.backBtn}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Report</Text>
-        <View style={{ width: 50 }} />
+        <TouchableOpacity onPress={() => {
+          Share.share({
+            message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${dashData?.enrolledCount ?? 0}\n✅ Lessons Completed: ${enrolledCourses.reduce((s, c) => s + (c.completedLessons ?? 0), 0)}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🪙 Coins: ${coinsData?.totalCoins ?? 0}\n\n— CodingKida App`,
+          });
+        }}>
+          <Text style={{ color: Colors.success, fontSize: 12, fontWeight: '600' }}>📤 Share</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -144,23 +146,23 @@ export default function MyReportScreen() {
               <TouchableOpacity style={styles.statCard} onPress={() => router.push('/enrolled-courses')}>
                 <Text style={styles.statEmoji}>📚</Text>
                 <Text style={styles.statValue}>{totalEnrolled}</Text>
-                <Text style={styles.statLabel}>Enrolled</Text>
+                <Text style={styles.statLabel}>Enrolled Courses</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.statCard} onPress={() => router.push('/completed-videos')}>
                 <Text style={styles.statEmoji}>✅</Text>
                 <Text style={styles.statValue}>{totalVideosWatched}</Text>
-                <Text style={styles.statLabel}>Completed</Text>
+                <Text style={styles.statLabel}>Video Completed</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.statCard} onPress={() => router.push('/achievements')}>
-                <Text style={styles.statEmoji}>🏅</Text>
-                <Text style={styles.statValue}>{completedCourses}</Text>
-                <Text style={styles.statLabel}>Certificates</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.statCard} onPress={() => setCoinsModalVisible(true)}>
-                <Text style={styles.statEmoji}>🪙</Text>
-                <Text style={styles.statValue}>{totalCoins}</Text>
-                <Text style={styles.statLabel}>Coins</Text>
-              </TouchableOpacity>
+              <View style={styles.statCard}>
+                <Text style={styles.statEmoji}>⏱</Text>
+                <Text style={styles.statValue}>{AttendanceService.formatMins(todayMins)}</Text>
+                <Text style={styles.statLabel}>Today</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statEmoji}>📅</Text>
+                <Text style={styles.statValue}>{AttendanceService.formatMins(weekMins)}</Text>
+                <Text style={styles.statLabel}>This Week</Text>
+              </View>
             </View>
 
             {/* Per-Course Progress */}

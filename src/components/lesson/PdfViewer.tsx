@@ -74,14 +74,19 @@ var loadingTask = pdfjsLib.getDocument({data: pdfData});
 loadingTask.promise.then(function(pdf) {
   document.getElementById('loading').style.display = 'none';
   var container = document.getElementById('pages');
+  var pixelRatio = Math.max(window.devicePixelRatio || 2, 3);
   for (var i = 1; i <= pdf.numPages; i++) {
     (function(pageNum) {
       pdf.getPage(pageNum).then(function(page) {
-        var scale = (window.innerWidth - 16) / page.getViewport({scale:1}).width;
-        var viewport = page.getViewport({scale: Math.min(scale, 2)});
+        var baseScale = (window.innerWidth) / page.getViewport({scale:1}).width;
+        var scale = baseScale * pixelRatio;
+        var viewport = page.getViewport({scale: scale});
         var canvas = document.createElement('canvas');
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
+        canvas.style.display = 'block';
         container.appendChild(canvas);
         page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
       });

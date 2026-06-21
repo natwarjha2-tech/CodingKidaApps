@@ -1,19 +1,76 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '@/hooks';
 import { useAuthStore } from '@/store';
+import { StorageService, USER_KEY } from '@/services/storage.service';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
-import { apiClient } from '@/api';
+import { apiClient, studentApi } from '@/api';
 
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const token = useAuthStore((s) => s.token);
+  const updateUser = useAuthStore((s) => s.updateUser);
 
   // Coins modal state
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(user?.avatarUrl ?? null);
+  const [uploading, setUploading] = useState(false);
+
+  // Sync avatarUri whenever user.avatarUrl changes (e.g. after app init fetches fresh presigned URL)
+  useEffect(() => {
+    if (user?.avatarUrl) {
+      setAvatarUri(user.avatarUrl);
+    }
+  }, [user?.avatarUrl]);
+
+  const pickAvatar = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow photo access to change your avatar.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const uri = result.assets[0].uri;
+      setAvatarUri(uri); // show locally immediately
+      setUploading(true);
+      try {
+        const formData = new FormData();
+        formData.append('avatar', { uri, name: 'avatar.jpg', type: 'image/jpeg' } as any);
+        const res = await apiClient.post<{ success: boolean; avatarUrl: string }>(
+          '/api/student/avatar',
+          formData,
+          { headers: { 'Content-Type': 'multipart/form-data' } }
+        );
+        if (res.data?.success) {
+          // Fetch fresh presigned URL via GET — raw S3 URL from POST is private
+          const avatarRes = await studentApi.getAvatar();
+          const freshUrl = avatarRes?.avatarUrl ?? null;
+          if (freshUrl) {
+            setAvatarUri(freshUrl);
+            updateUser({ avatarUrl: freshUrl });
+            // Save fresh presigned URL in SecureStore for this session
+            const updatedUser = { ...user, avatarUrl: freshUrl };
+            await StorageService.setObject(USER_KEY, updatedUser);
+          }
+        }
+      } catch {
+        Alert.alert('Upload Failed', 'Could not upload avatar. Please try again.');
+        setAvatarUri(user?.avatarUrl ?? null); // revert on failure
+      } finally {
+        setUploading(false);
+      }
+    }
+  };
 
   // Change password state
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -91,8 +148,6 @@ export default function ProfileScreen() {
 
   const menuItems = [
     { emoji: '📊', label: 'My Report', color: Colors.primary },
-    { emoji: '🏆', label: 'Achievements', color: Colors.warning },
-    { emoji: '🔥', label: 'Weekly Streak', color: Colors.danger },
     { emoji: '🪙', label: 'My Coins', color: '#fbbf24' },
     { emoji: '🎁', label: 'Refer & Earn', color: Colors.success },
     { emoji: '🔒', label: 'Change Password', color: Colors.purple },
@@ -115,20 +170,29 @@ export default function ProfileScreen() {
         {/* Profile Card — exact desktop style */}
         <View style={styles.profileCard}>
           <View style={styles.profileGradientBg} />
-          <View style={styles.avatarWrap}>
+          <TouchableOpacity style={styles.avatarWrap} onPress={pickAvatar} disabled={uploading}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initial}</Text>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={{ width: 72, height: 72, borderRadius: 36 }} />
+              ) : (
+                <Text style={styles.avatarText}>{initial}</Text>
+              )}
+              {uploading && (
+                <View style={styles.avatarUploadingOverlay}>
+                  <ActivityIndicator color="#fff" size="small" />
+                </View>
+              )}
             </View>
             <View style={styles.cameraBtn}>
               <Text style={{ fontSize: 10 }}>📷</Text>
             </View>
-          </View>
+          </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.profileName}>{user?.name ?? '—'}</Text>
             <Text style={styles.profileEmail}>{user?.email ?? '—'}</Text>
-            <View style={styles.proBadge}>
-              <Text style={styles.proBadgeText}>Pro Member 👑</Text>
-            </View>
+            <TouchableOpacity style={styles.editProfileBtn} onPress={() => router.push('/edit-profile')}>
+              <Text style={styles.editProfileText}>✏️ Edit Profile</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -215,7 +279,7 @@ const styles = StyleSheet.create({
   // Page header — exact desktop gradient header
   pageHeader: {
     margin: 16, borderRadius: 16, padding: 24,
-    backgroundColor: 'rgba(239,68,68,0.12)',
+    backgroundColor: 'rgba(108,71,255,0.12)',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
   pageTitle: { fontSize: 24, fontWeight: '800', color: '#fff', marginBottom: 6 },
@@ -242,6 +306,11 @@ const styles = StyleSheet.create({
     borderWidth: 3, borderColor: 'rgba(108,71,255,0.4)',
   },
   avatarText: { fontSize: 28, fontWeight: '800', color: '#fff' },
+  avatarUploadingOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 36, backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
+  },
   cameraBtn: {
     position: 'absolute', bottom: -4, right: -4,
     width: 24, height: 24, borderRadius: 12,
@@ -251,13 +320,14 @@ const styles = StyleSheet.create({
   },
   profileName: { fontSize: 20, fontWeight: '800', color: '#fff', marginBottom: 4 },
   profileEmail: { color: Colors.muted, fontSize: 13, marginBottom: 10 },
-  proBadge: {
+  editProfileBtn: {
     alignSelf: 'flex-start',
     paddingHorizontal: 12, paddingVertical: 4,
     borderRadius: 50,
-    backgroundColor: 'rgba(245,158,11,0.2)',
+    backgroundColor: Colors.primaryLight,
+    borderWidth: 1, borderColor: Colors.primary,
   },
-  proBadgeText: { fontSize: 11, fontWeight: '700', color: '#f59e0b' },
+  editProfileText: { fontSize: 11, fontWeight: '700', color: Colors.primary },
 
   // Menu
   menuSection: { paddingHorizontal: 16, gap: 8 },

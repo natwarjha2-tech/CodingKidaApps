@@ -15,7 +15,7 @@ export function CoinsModal({ visible, onClose }: CoinsModalProps) {
   const { data, isLoading } = useQuery({
     queryKey: ['coins'],
     queryFn: () => coinsApi.get(),
-    enabled: isAuthenticated && visible,
+    enabled: isAuthenticated,
     staleTime: 1000 * 60 * 2,
   });
 

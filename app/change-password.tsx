@@ -16,8 +16,8 @@ export default function ChangePasswordScreen() {
       Alert.alert('Error', 'Please fill all fields.');
       return;
     }
-    if (newPassword.length < 6) {
-      Alert.alert('Error', 'New password must be at least 6 characters.');
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'New password must be at least 8 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -66,7 +66,7 @@ export default function ChangePasswordScreen() {
             <Text style={styles.label}>New Password</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter new password (min 6 chars)"
+              placeholder="Enter new password (min 8 chars)"
               placeholderTextColor={Colors.muted}
               secureTextEntry
               value={newPassword}

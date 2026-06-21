@@ -33,6 +33,13 @@ export default function LessonScreen() {
   const queryClient = useQueryClient();
   const [lessonCompleted, setLessonCompleted] = useState(false);
 
+  // Invalidate dashboard when leaving lesson — so lastWatched card updates instantly
+  useEffect(() => {
+    return () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    };
+  }, []);
+
   // Coins
   const { data: coinsData } = useCoins();
   const totalCoins = coinsData?.totalCoins ?? 0;
@@ -49,12 +56,17 @@ export default function LessonScreen() {
   // Download status
   const [videoDownloaded, setVideoDownloaded] = useState(false);
   const [pdfDownloaded, setPdfDownloaded] = useState(false);
+  const [savedToWatchlist, setSavedToWatchlist] = useState(false);
 
   // Check download status on mount
   useEffect(() => {
     if (lessonId) {
       DownloadService.isDownloaded(lessonId, 'video').then(setVideoDownloaded);
       DownloadService.isDownloaded(lessonId, 'pdf').then(setPdfDownloaded);
+      // Check watchlist
+      StorageService.getObject<any[]>(WATCHLIST_KEY).then((items) => {
+        setSavedToWatchlist((items ?? []).some((i) => i.lessonId === lessonId));
+      });
     }
   }, [lessonId]);
 
@@ -110,6 +122,7 @@ export default function LessonScreen() {
       savedAt: new Date().toISOString(),
     };
     await StorageService.setObject(WATCHLIST_KEY, [...existing, newItem]);
+    setSavedToWatchlist(true);
     Alert.alert('Saved!', 'Lesson added to your watchlist.');
   };
 
@@ -260,14 +273,18 @@ export default function LessonScreen() {
       <VideoPlayer
         videoUrl={activeLesson?.videoUrl ?? ''}
         title={activeLesson?.title}
+        qualityUrls={activeLesson?.qualityUrls}
+        hlsQualities={activeLesson?.hlsQualities}
         onComplete={handleVideoComplete}
       />
 
       {/* Action Toolbar */}
       <View style={styles.actionBar}>
         <TouchableOpacity style={styles.actionBtn} onPress={saveToWatchlist}>
-          <Text style={styles.actionIcon}>📌</Text>
-          <Text style={styles.actionLabel}>Save</Text>
+          <Text style={styles.actionIcon}>{savedToWatchlist ? '✅' : '📌'}</Text>
+          <Text style={[styles.actionLabel, savedToWatchlist && { color: Colors.success }]}>
+            {savedToWatchlist ? 'Saved' : 'Save'}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionBtn} onPress={downloadVideo}>
           <Text style={styles.actionIcon}>{videoDownloaded ? '✅' : '⬇️'}</Text>
@@ -297,7 +314,7 @@ export default function LessonScreen() {
       </View>
 
       {/* Tab Content */}
-      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
         {/* Notes Tab */}
         {activeTab === 'notes' && (
@@ -538,17 +555,13 @@ export default function LessonScreen() {
         {activeTab === 'ai' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>🤖 AI Mentor</Text>
-            <Text style={styles.notesText}>
-              Ask any question about this lesson and get instant help from your AI mentor.
-            </Text>
             <View style={styles.aiInputRow}>
               <TextInput
                 style={styles.aiInput}
-                placeholder="Ask a question about this lesson..."
+                placeholder="Ask anything about this lesson"
                 placeholderTextColor={Colors.muted}
                 value={aiQuestion}
                 onChangeText={setAiQuestion}
-                multiline
                 autoCapitalize="none"
               />
               <TouchableOpacity
@@ -567,7 +580,7 @@ export default function LessonScreen() {
           </View>
         )}
 
-        <View style={{ height: Spacing.xxxl }} />
+        <View style={{ height: activeTab === 'ai' ? 300 : Spacing.xxxl }} />
       </ScrollView>
 
       {/* Coins Modal */}

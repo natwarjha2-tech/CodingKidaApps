@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,12 +12,16 @@ const rankMedals: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
 export default function LeaderboardScreen() {
   const { data: dashData } = useDashboard();
   const enrolledCourses = dashData?.enrolledCourses ?? [];
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(
-    enrolledCourses.length > 0 ? enrolledCourses[0].id : null
-  );
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
 
-  // Update selectedCourseId when enrolledCourses load
-  const courseId = selectedCourseId ?? enrolledCourses[0]?.id ?? '';
+  // Set initial course only once when data first loads — prevents jump
+  useEffect(() => {
+    if (selectedCourseId === null && enrolledCourses.length > 0) {
+      setSelectedCourseId(enrolledCourses[0].id);
+    }
+  }, [enrolledCourses]);
+
+  const courseId = selectedCourseId ?? '';
 
   const { data, isLoading } = useQuery({
     queryKey: ['leaderboard', courseId],
@@ -39,35 +43,37 @@ export default function LeaderboardScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      {/* Course Selector */}
-      {enrolledCourses.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.pillsContainer}
-        >
-          {enrolledCourses.map((course) => (
-            <TouchableOpacity
-              key={course.id}
-              style={[
-                styles.pill,
-                courseId === course.id && styles.pillActive,
-              ]}
-              onPress={() => setSelectedCourseId(course.id)}
-            >
-              <Text
+      {/* Course Selector — fixed at top, no layout shift */}
+      <View style={styles.pillsWrapper}>
+        {enrolledCourses.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.pillsContainer}
+          >
+            {enrolledCourses.map((course) => (
+              <TouchableOpacity
+                key={course.id}
                 style={[
-                  styles.pillText,
-                  courseId === course.id && styles.pillTextActive,
+                  styles.pill,
+                  courseId === course.id && styles.pillActive,
                 ]}
-                numberOfLines={1}
+                onPress={() => setSelectedCourseId(course.id)}
               >
-                {course.title}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      )}
+                <Text
+                  style={[
+                    styles.pillText,
+                    courseId === course.id && styles.pillTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {course.title}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+      </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {!courseId ? (
@@ -164,14 +170,15 @@ const styles = StyleSheet.create({
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
   headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  content: { padding: 16 },
+  content: { padding: 16, paddingTop: 8 },
 
   // Course Pills
-  pillsContainer: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
+  pillsWrapper: { minHeight: 52 }, // fixed height prevents layout shift
+  pillsContainer: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8, alignItems: 'center' },
   pill: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 12,
     backgroundColor: Colors.card2,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -185,9 +192,9 @@ const styles = StyleSheet.create({
   pillTextActive: { color: Colors.primary },
 
   // Loading / Empty
-  loadingState: { alignItems: 'center', padding: 60, gap: 12 },
+  loadingState: { alignItems: 'center', padding: 40, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
-  emptyState: { alignItems: 'center', padding: 60 },
+  emptyState: { alignItems: 'center', padding: 40 },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
   emptyText: { color: Colors.muted, fontSize: 14, textAlign: 'center' },

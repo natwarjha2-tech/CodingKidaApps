@@ -41,7 +41,8 @@ export default function EnrolledCoursesScreen() {
               activeOpacity={0.7}
             >
               <View style={styles.courseIconWrap}>
-                <Text style={styles.courseIcon}>{course.icon || '📘'}</Text>
+                <View style={styles.courseIconGlow} />
+                <Text style={styles.courseIcon}>📖</Text>
               </View>
               <View style={styles.courseInfo}>
                 <Text style={styles.courseTitle}>{course.title}</Text>
@@ -114,14 +115,23 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   courseIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(108,71,255,0.15)',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#4C26A8',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
   },
-  courseIcon: { fontSize: 22 },
+  courseIconGlow: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(108,71,255,0.4)',
+  },
+  courseIcon: { fontSize: 22, zIndex: 1 },
   courseInfo: { flex: 1 },
   courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
   courseMeta: { color: Colors.muted, fontSize: 12, marginBottom: 10 },

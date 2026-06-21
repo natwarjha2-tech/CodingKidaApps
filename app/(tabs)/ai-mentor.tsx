@@ -47,7 +47,7 @@ export default function AiMentorScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>🤖 AI Mentor</Text>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
         <FlatList
           ref={listRef}
           data={messages}

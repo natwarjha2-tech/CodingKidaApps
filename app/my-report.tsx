@@ -2,18 +2,99 @@ import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useDashboard, useCoins } from '@/hooks';
+import { useQuery } from '@tanstack/react-query';
+import { useDashboard, useCoins, useWeeklyStreakCount } from '@/hooks';
+import { achievementsApi, weeklyStreakApi, coinsApi } from '@/api';
 import { AttendanceService } from '@/services';
-import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
+import type { Achievement } from '@/types';
+
+const badgeEmoji: Record<string, string> = {
+  'super-master': '🥇',
+  master: '🥈',
+  pro: '🥉',
+};
+
+const badgeLabel: Record<string, string> = {
+  'super-master': 'Super Master',
+  master: 'Master',
+  pro: 'Pro',
+};
+
+function formatDate(dateStr?: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
 
 export default function MyReportScreen() {
   const { data: dashData, isLoading: dashLoading } = useDashboard();
   const { data: coinsData, isLoading: coinsLoading } = useCoins();
-  const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const { data: streakCount } = useWeeklyStreakCount();
   const [todayMins, setTodayMins] = useState(0);
   const [weekMins, setWeekMins] = useState(0);
   const [calendarDays, setCalendarDays] = useState<{ date: string; day: number; mins: number; active: boolean; isToday: boolean }[]>([]);
+  const [selectedBadgeType, setSelectedBadgeType] = useState<string | null>(null);
+
+  // Achievements
+  const { data: achievementsData, isLoading: achievementsLoading } = useQuery({
+    queryKey: ['achievements'],
+    queryFn: () => achievementsApi.get(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // Weekly Streak full data
+  const enrolled = dashData?.enrolledCourses ?? [];
+  const courseIds = enrolled.map((c) => c.id);
+
+  const { data: streakData, isLoading: streakLoading } = useQuery({
+    queryKey: ['streak-history', courseIds],
+    queryFn: async () => {
+      if (courseIds.length === 0) return { streaks: [] as any[], completedCount: 0 };
+      const results = await Promise.allSettled(
+        enrolled.map((course) =>
+          weeklyStreakApi.getByCourse(course.id).then((res) => ({
+            courseTitle: course.title,
+            streaks: res.streaks ?? [],
+            completedCount: res.completedCount ?? 0,
+          }))
+        )
+      );
+      let allStreaks: any[] = [];
+      let totalCompleted = 0;
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          totalCompleted += result.value.completedCount;
+          for (const streak of result.value.streaks) {
+            allStreaks.push({
+              id: streak.id,
+              title: streak.title,
+              weekNumber: streak.weekNumber,
+              completed: streak.completed,
+              courseTitle: result.value.courseTitle,
+            });
+          }
+        }
+      }
+      return { streaks: allStreaks, completedCount: totalCompleted };
+    },
+    enabled: courseIds.length > 0,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // Coins full transaction data
+  const { data: coinsFullData, isLoading: coinsFullLoading } = useQuery({
+    queryKey: ['coins'],
+    queryFn: () => coinsApi.get(),
+    staleTime: 1000 * 60 * 2,
+  });
 
   const isLoading = dashLoading || coinsLoading;
 
@@ -26,13 +107,10 @@ export default function MyReportScreen() {
 
   const enrolledCourses = dashData?.enrolledCourses ?? [];
   const totalEnrolled = dashData?.enrolledCount ?? enrolledCourses.length;
-  const totalCoins = coinsData?.totalCoins ?? 0;
+  const totalCoins = coinsFullData?.totalCoins ?? coinsData?.totalCoins ?? 0;
+  const transactions = coinsFullData?.transactions ?? [];
 
   // Calculate stats
-  const completedCourses = enrolledCourses.filter(
-    (c) => c.progressPercent >= 100
-  ).length;
-
   const totalVideosWatched = enrolledCourses.reduce(
     (sum, c) => sum + (c.completedLessons ?? 0),
     0
@@ -46,9 +124,31 @@ export default function MyReportScreen() {
         )
       : 0;
 
-  // Use real attendance calendar data
+  // Attendance calendar
   const activeCalendar = calendarDays;
   const activeDaysCount = calendarDays.filter((d) => d.active).length;
+
+  // Achievements grouped by badge type
+  const achievements: Achievement[] = achievementsData?.achievements ?? [];
+  const badgeCounts: Record<string, number> = {
+    'super-master': 0,
+    master: 0,
+    pro: 0,
+  };
+  for (const a of achievements) {
+    if (badgeCounts[a.badgeType] !== undefined) {
+      badgeCounts[a.badgeType]++;
+    }
+  }
+
+  // Filtered achievements for selected badge
+  const filteredAchievements = selectedBadgeType
+    ? achievements.filter((a) => a.badgeType === selectedBadgeType)
+    : [];
+
+  // Streak data
+  const streaks = streakData?.streaks ?? [];
+  const streakCompletedCount = streakData?.completedCount ?? streakCount ?? 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -60,7 +160,7 @@ export default function MyReportScreen() {
         <Text style={styles.headerTitle}>My Report</Text>
         <TouchableOpacity onPress={() => {
           Share.share({
-            message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${dashData?.enrolledCount ?? 0}\n✅ Lessons Completed: ${enrolledCourses.reduce((s, c) => s + (c.completedLessons ?? 0), 0)}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🪙 Coins: ${coinsData?.totalCoins ?? 0}\n\n— CodingKida App`,
+            message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${totalEnrolled}\n✅ Lessons Completed: ${totalVideosWatched}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🏆 Achievements: ${achievements.length}\n🔥 Weekly Streak: ${streakCompletedCount}\n🪙 Coins: ${totalCoins}\n\n— CodingKida App`,
           });
         }}>
           <Text style={{ color: Colors.success, fontSize: 12, fontWeight: '600' }}>📤 Share</Text>
@@ -165,8 +265,177 @@ export default function MyReportScreen() {
               </View>
             </View>
 
-            {/* Per-Course Progress */}
-            <Text style={styles.sectionTitle}>Course Progress</Text>
+            {/* ═══════════ ACHIEVEMENTS SECTION ═══════════ */}
+            <Text style={styles.sectionTitle}>🏆 Achievements</Text>
+            {achievementsLoading ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
+            ) : achievements.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyEmoji}>🏆</Text>
+                <Text style={styles.emptyTitle}>No achievements yet</Text>
+                <Text style={styles.emptyText}>Complete quizzes to earn badges!</Text>
+              </View>
+            ) : (
+              <>
+                {/* 3 Badge Cards */}
+                <View style={styles.badgeGrid}>
+                  {(['super-master', 'master', 'pro'] as const).map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[
+                        styles.badgeCard,
+                        selectedBadgeType === type && styles.badgeCardActive,
+                      ]}
+                      onPress={() => setSelectedBadgeType(selectedBadgeType === type ? null : type)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.badgeCardEmoji}>{badgeEmoji[type]}</Text>
+                      <Text style={styles.badgeCardCount}>{badgeCounts[type]}</Text>
+                      <Text style={styles.badgeCardLabel}>{badgeLabel[type]}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Filtered badge details */}
+                {selectedBadgeType && (
+                  <View style={styles.badgeDetailSection}>
+                    <Text style={styles.badgeDetailTitle}>
+                      {badgeEmoji[selectedBadgeType]} {badgeLabel[selectedBadgeType]} Badges ({filteredAchievements.length})
+                    </Text>
+                    {filteredAchievements.length === 0 ? (
+                      <Text style={styles.badgeDetailEmpty}>No {badgeLabel[selectedBadgeType]} badges earned yet.</Text>
+                    ) : (
+                      filteredAchievements.map((achievement) => (
+                        <View key={achievement.id} style={styles.achievementCard}>
+                          <View style={styles.achievementInfo}>
+                            <Text style={styles.achievementTitle}>{achievement.title}</Text>
+                            {achievement.courseTitle && (
+                              <Text style={styles.achievementMeta}>
+                                {achievement.courseTitle}
+                                {achievement.lessonTitle ? ` · ${achievement.lessonTitle}` : ''}
+                              </Text>
+                            )}
+                            <View style={styles.achievementStatsRow}>
+                              {achievement.score != null && (
+                                <View style={styles.achievementStatBadge}>
+                                  <Text style={styles.achievementStatText}>Score: {achievement.score}</Text>
+                                </View>
+                              )}
+                              {achievement.rank != null && (
+                                <View style={[styles.achievementStatBadge, { backgroundColor: Colors.warningLight }]}>
+                                  <Text style={[styles.achievementStatText, { color: Colors.warning }]}>
+                                    Rank #{achievement.rank}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.achievementDate}>
+                              {formatDate(achievement.earnedAt || achievement.createdAt)}
+                            </Text>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+              </>
+            )}
+
+            {/* ═══════════ WEEKLY STREAK SECTION ═══════════ */}
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>🔥 Weekly Streak</Text>
+            {streakLoading ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
+            ) : (
+              <>
+                <View style={styles.streakSummary}>
+                  <Text style={styles.streakSummaryEmoji}>🔥</Text>
+                  <Text style={styles.streakSummaryValue}>{streakCompletedCount}</Text>
+                  <Text style={styles.streakSummaryLabel}>challenges completed</Text>
+                </View>
+
+                {streaks.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyEmoji}>⏳</Text>
+                    <Text style={styles.emptyText}>No streak challenges yet.</Text>
+                  </View>
+                ) : (
+                  streaks.slice(0, 10).map((streak: any) => (
+                    <View key={streak.id} style={styles.streakCard}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.streakWeek}>Week {streak.weekNumber}</Text>
+                        <Text style={styles.streakTitle}>{streak.title}</Text>
+                        <Text style={styles.streakCourse}>{streak.courseTitle}</Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.streakBadge,
+                          {
+                            backgroundColor: streak.completed
+                              ? Colors.successLight
+                              : Colors.warningLight,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.streakBadgeText,
+                            { color: streak.completed ? Colors.success : Colors.warning },
+                          ]}
+                        >
+                          {streak.completed ? '✅ PASS' : '⏳ Pending'}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+
+                {streaks.length > 10 && (
+                  <TouchableOpacity style={styles.viewAllBtn} onPress={() => router.push('/streak-history')}>
+                    <Text style={styles.viewAllText}>View All ({streaks.length}) →</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {/* ═══════════ MY COINS SECTION ═══════════ */}
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>🪙 My Coins</Text>
+            {coinsFullLoading ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
+            ) : (
+              <>
+                <View style={styles.coinsSummary}>
+                  <Text style={styles.coinsSummaryValue}>{totalCoins}</Text>
+                  <Text style={styles.coinsSummaryLabel}>Total Coins Earned</Text>
+                  <Text style={styles.coinsFooter}>100+ coins = ₹ discount on next course</Text>
+                </View>
+
+                {/* Transactions */}
+                <Text style={styles.subsectionTitle}>Recent Rewards</Text>
+                {transactions.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyText}>No rewards yet. Complete quizzes to earn coins!</Text>
+                  </View>
+                ) : (
+                  transactions.map((tx: any, i: number) => (
+                    <View key={i} style={styles.txItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.txReason}>{tx.reason}</Text>
+                      </View>
+                      <Text style={[
+                        styles.txCoins,
+                        { color: tx.type === 'EARNED' ? Colors.success : Colors.danger },
+                      ]}>
+                        {tx.type === 'EARNED' ? '+' : '-'}{tx.coins}
+                      </Text>
+                      <Text style={styles.txTime}>{formatTime(tx.createdAt)}</Text>
+                    </View>
+                  ))
+                )}
+              </>
+            )}
+
+            {/* ═══════════ COURSE PROGRESS SECTION ═══════════ */}
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Course Progress</Text>
             {enrolledCourses.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyEmoji}>📖</Text>
@@ -209,8 +478,6 @@ export default function MyReportScreen() {
           </>
         )}
       </ScrollView>
-
-      <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
     </SafeAreaView>
   );
 }
@@ -302,8 +569,129 @@ const styles = StyleSheet.create({
   statValue: { color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 4 },
   statLabel: { color: Colors.muted, fontSize: 12 },
 
-  // Course Cards
+  // Section titles
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  subsectionTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 10, marginTop: 12 },
+
+  // Achievements
+  badgeGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  badgeCard: {
+    flex: 1,
+    backgroundColor: Colors.card2,
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  badgeCardActive: {
+    borderColor: Colors.warning,
+    backgroundColor: 'rgba(245,158,11,0.08)',
+  },
+  badgeCardEmoji: { fontSize: 28, marginBottom: 6 },
+  badgeCardCount: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 2 },
+  badgeCardLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
+
+  badgeDetailSection: { marginBottom: 8 },
+  badgeDetailTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 12 },
+  badgeDetailEmpty: { color: Colors.muted, fontSize: 13, marginBottom: 12 },
+
+  achievementCard: {
+    backgroundColor: Colors.card2,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  achievementInfo: {},
+  achievementTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  achievementMeta: { color: Colors.muted, fontSize: 12, marginBottom: 8 },
+  achievementStatsRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  achievementStatBadge: {
+    backgroundColor: Colors.primaryLight,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  achievementStatText: { color: Colors.primary, fontSize: 11, fontWeight: '600' },
+  achievementDate: { color: Colors.muted, fontSize: 11 },
+
+  // Weekly Streak
+  streakSummary: {
+    alignItems: 'center',
+    backgroundColor: Colors.card2,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  streakSummaryEmoji: { fontSize: 32, marginBottom: 6 },
+  streakSummaryValue: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 2 },
+  streakSummaryLabel: { fontSize: 13, color: Colors.muted },
+
+  streakCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.card2,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  streakWeek: { color: Colors.purple, fontSize: 11, fontWeight: '700', marginBottom: 3 },
+  streakTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 2 },
+  streakCourse: { color: Colors.muted, fontSize: 11 },
+  streakBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  streakBadgeText: { fontSize: 11, fontWeight: '700' },
+
+  viewAllBtn: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  viewAllText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
+
+  // Coins
+  coinsSummary: {
+    alignItems: 'center',
+    backgroundColor: Colors.card2,
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  coinsSummaryValue: { fontSize: 32, fontWeight: '800', color: '#fbbf24', marginBottom: 4 },
+  coinsSummaryLabel: { fontSize: 14, color: Colors.muted, marginBottom: 8 },
+  coinsFooter: { fontSize: 12, color: Colors.success, fontWeight: '500' },
+
+  txItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card2,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  txReason: { color: '#fff', fontSize: 13, fontWeight: '500' },
+  txCoins: { fontSize: 14, fontWeight: '700' },
+  txTime: { color: Colors.muted, fontSize: 11, width: 42 },
+
+  // Course Cards
   courseCard: {
     backgroundColor: Colors.card2,
     borderRadius: 16,
@@ -323,8 +711,8 @@ const styles = StyleSheet.create({
   courseMeta: { color: Colors.muted, fontSize: 12, marginTop: 8 },
 
   // Empty
-  emptyState: { alignItems: 'center', padding: 40 },
-  emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
-  emptyText: { color: Colors.muted, fontSize: 14 },
+  emptyState: { alignItems: 'center', padding: 24 },
+  emptyEmoji: { fontSize: 36, marginBottom: 12 },
+  emptyTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 6 },
+  emptyText: { color: Colors.muted, fontSize: 13 },
 });

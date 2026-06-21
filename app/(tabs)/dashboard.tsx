@@ -2,17 +2,19 @@ import { useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Image } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store';
 import { useCourseStore } from '@/store';
-import { useDashboard, useCoins, useWeeklyStreakCount, useCourses, usePrefetchDashboard } from '@/hooks';
+import { useDashboard, useCoins, useCourses, usePrefetchDashboard } from '@/hooks';
+import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
+import type { Achievement } from '@/types';
 
 export default function DashboardScreen() {
   const user = useAuthStore((s) => s.user);
   const { data, isLoading, refetch, isRefetching } = useDashboard();
   const { data: coinsData } = useCoins();
-  const { data: streakCount } = useWeeklyStreakCount();
   const { data: allCoursesData } = useCourses('All', '');
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const lessonContext = useCourseStore((s) => s.lessonContext);
@@ -20,11 +22,31 @@ export default function DashboardScreen() {
   // Prefetch leaderboard, achievements & streak so child screens open instantly
   usePrefetchDashboard();
 
-  const enrolled = data?.enrolledCourses ?? [];
   const enrolledCount = data?.enrolledCount ?? 0;
-  const completedCount = enrolled.reduce((sum, c) => sum + (c.completedLessons ?? 0), 0);
-  const certCount = enrolled.filter((c) => c.progressPercent === 100).length;
   const totalCoins = coinsData?.totalCoins ?? 0;
+
+  // Fetch achievements to get latest badge
+  const { data: achievementsData } = useQuery({
+    queryKey: ['achievements'],
+    queryFn: () => achievementsApi.get(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const achievements: Achievement[] = achievementsData?.achievements ?? [];
+  // Sort by earnedAt/createdAt descending to get latest badge
+  const latestBadge = achievements.length > 0
+    ? [...achievements].sort((a, b) => {
+        const dateA = new Date(a.earnedAt || a.createdAt).getTime();
+        const dateB = new Date(b.earnedAt || b.createdAt).getTime();
+        return dateB - dateA;
+      })[0]
+    : null;
+
+  const badgeEmoji: Record<string, string> = {
+    'super-master': '🥇',
+    master: '🥈',
+    pro: '🥉',
+  };
 
   // Use lessonContext (latest opened lesson) if available, else fall back to API lastWatched
   const resumeData = lessonContext
@@ -37,32 +59,6 @@ export default function DashboardScreen() {
         progressPercent: data?.lastWatched?.progressPercent ?? 0,
       }
     : data?.lastWatched ?? null;
-
-  const statCards = [
-    { emoji: '📚', value: enrolledCount, label: 'Enrolled Courses', color: Colors.primary, glow: 'rgba(108,71,255,0.25)' },
-    { emoji: '✅', value: completedCount, label: 'Videos Completed', color: Colors.success, glow: 'rgba(34,197,94,0.25)' },
-    { emoji: '🏆', value: certCount, label: 'Achievement', color: Colors.warning, glow: 'rgba(245,158,11,0.25)' },
-    { emoji: '🔥', value: streakCount ?? 0, label: 'Weekly Streak', color: Colors.danger, glow: 'rgba(239,68,68,0.25)' },
-  ];
-
-  const handleStatPress = (label: string, value: number) => {
-    switch (label) {
-      case 'Enrolled Courses':
-        router.push('/enrolled-courses');
-        break;
-      case 'Videos Completed':
-        router.push('/completed-videos');
-        break;
-      case 'Achievement':
-        router.push('/achievements');
-        break;
-      case 'Weekly Streak':
-        router.push('/streak-history');
-        break;
-      default:
-        break;
-    }
-  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -103,23 +99,37 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Stats Row — exact desktop card style */}
+        {/* Stats Row — Enrolled Courses + Latest Badge */}
         <View style={styles.statsGrid}>
-          {statCards.map((stat) => (
-            <TouchableOpacity
-              key={stat.label}
-              style={[styles.statCard, { borderColor: `${stat.color}20` }]}
-              onPress={() => handleStatPress(stat.label, stat.value)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.statGlow, { backgroundColor: stat.glow }]} />
-              <View style={[styles.statIconWrap, { backgroundColor: `${stat.color}20`, borderColor: `${stat.color}40` }]}>
-                <Text style={styles.statEmoji}>{stat.emoji}</Text>
-              </View>
-              <Text style={styles.statValue}>{isLoading ? '—' : stat.value}</Text>
-              <Text style={styles.statLabel}>{stat.label}</Text>
-            </TouchableOpacity>
-          ))}
+          {/* Enrolled Courses Card */}
+          <TouchableOpacity
+            style={[styles.statCard, { borderColor: `${Colors.primary}20` }]}
+            onPress={() => router.push('/enrolled-courses')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.statGlow, { backgroundColor: 'rgba(108,71,255,0.25)' }]} />
+            <View style={[styles.statIconWrap, { backgroundColor: `${Colors.primary}20`, borderColor: `${Colors.primary}40` }]}>
+              <Text style={styles.statEmoji}>📚</Text>
+            </View>
+            <Text style={styles.statValue}>{isLoading ? '—' : enrolledCount}</Text>
+            <Text style={styles.statLabel}>Enrolled Courses</Text>
+          </TouchableOpacity>
+
+          {/* Latest Achievement Badge Card — always visible */}
+          <TouchableOpacity
+            style={[styles.statCard, { borderColor: `${Colors.warning}20` }]}
+            onPress={() => router.push('/achievements')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.statGlow, { backgroundColor: 'rgba(245,158,11,0.25)' }]} />
+            <View style={[styles.statIconWrap, { backgroundColor: `${Colors.warning}20`, borderColor: `${Colors.warning}40` }]}>
+              <Text style={styles.statEmoji}>{latestBadge ? (badgeEmoji[latestBadge.badgeType] || '🏅') : '🏆'}</Text>
+            </View>
+            <Text style={styles.latestBadgeTitle} numberOfLines={1}>
+              {latestBadge ? latestBadge.title : 'No Badges Yet'}
+            </Text>
+            <Text style={styles.statLabel}>{latestBadge ? 'Latest Badge' : 'Earn your first badge!'}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Continue Learning */}
@@ -177,7 +187,6 @@ export default function DashboardScreen() {
             </View>
           </TouchableOpacity>
         ))}
-        )}
 
         {/* Quick Actions */}
         <View style={styles.sectionHeader}>
@@ -273,6 +282,7 @@ const styles = StyleSheet.create({
   statEmoji: { fontSize: 24 },
   statValue: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 4 },
   statLabel: { fontSize: 12, color: 'rgba(255,255,255,0.6)', fontWeight: '500' },
+  latestBadgeTitle: { fontSize: 13, fontWeight: '700', color: '#fff', marginBottom: 4 },
 
   // Continue Learning Card
   continueCard: {
@@ -288,7 +298,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(245,158,11,0.2)',
   },
   continueThumbnailIcon: { fontSize: 24, color: '#F59E0B' },
-  continueCourseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  continueCourseTitle: { color: '#c4b5fd', fontSize: 16, fontWeight: '800', marginBottom: 4 },
   continueMeta: { color: Colors.muted, fontSize: 12, marginBottom: 10 },
   resumeBtn: {
     backgroundColor: '#4A1D96', borderRadius: 10,
@@ -330,7 +340,7 @@ const styles = StyleSheet.create({
     padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
     gap: 12,
   },
-  courseTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 2 },
+  courseTitle: { color: '#c4b5fd', fontSize: 15, fontWeight: '800', marginBottom: 2 },
   courseMeta: { color: Colors.muted, fontSize: 11, marginBottom: 10 },
   percent: { fontSize: 16, fontWeight: '800', marginLeft: 8 },
   priceBadge: { borderRadius: 50, paddingHorizontal: 10, paddingVertical: 4 },

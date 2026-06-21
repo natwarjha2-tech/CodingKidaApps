@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Alert,
+  StyleSheet, ScrollView, Alert,
+  Keyboard, Platform,
 } from 'react-native';
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,7 +13,29 @@ export default function SignupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const { signup, isLoading } = useAuth();
+  const scrollRef = useRef<ScrollView>(null);
+
+  // Listen for keyboard show/hide to add bottom padding
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      // Auto scroll to bottom so all form content is visible
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const handleSignup = async () => {
     if (!name.trim() || !email.trim() || !password.trim()) {
@@ -44,122 +67,118 @@ export default function SignupScreen() {
       <View style={[styles.corner, styles.cornerBR]} />
 
       <SafeAreaView style={{ flex: 1 }}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[styles.scroll, { paddingBottom: keyboardHeight > 0 ? keyboardHeight : 40 }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <ScrollView
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {/* Logo */}
-            <View style={styles.logoRow}>
-              <View style={styles.logoIcon}>
-                <Text style={styles.logoIconText}>🖥</Text>
+          {/* Logo */}
+          <View style={styles.logoRow}>
+            <View style={styles.logoIcon}>
+              <Text style={styles.logoIconText}>🖥</Text>
+            </View>
+            <Text style={styles.logoText}>
+              Coding<Text style={styles.logoAccent}>Kida</Text>
+            </Text>
+          </View>
+
+          <Text style={styles.heroTitle}>
+            Join the coding{'\n'}
+            <Text style={styles.heroHighlight}>revolution</Text>
+          </Text>
+          <Text style={styles.heroDesc}>
+            50,000+ students are already learning. Start your journey today — free!
+          </Text>
+
+          {/* Card */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Create Account</Text>
+            <Text style={styles.cardSubtitle}>Join CodingKida today — it's free</Text>
+
+            {/* Name */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Full Name</Text>
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputIcon}>👤</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Your full name"
+                  placeholderTextColor="#64748b"
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                />
               </View>
-              <Text style={styles.logoText}>
-                Coding<Text style={styles.logoAccent}>Kida</Text>
+            </View>
+
+            {/* Email */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Email</Text>
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputIcon}>✉</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="you@example.com"
+                  placeholderTextColor="#64748b"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+            </View>
+
+            {/* Password */}
+            <View style={styles.formGroup}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.inputWrapper}>
+                <Text style={styles.inputIcon}>🔒</Text>
+                <TextInput
+                  style={[styles.input, { paddingRight: 48 }]}
+                  placeholder="Min. 8 characters"
+                  placeholderTextColor="#64748b"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowPassword(!showPassword)}
+                >
+                  <Text style={{ fontSize: 16 }}>{showPassword ? '🙈' : '👁'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Signup Button */}
+            <TouchableOpacity
+              style={[styles.signupBtn, isLoading && styles.btnDisabled]}
+              onPress={handleSignup}
+              disabled={isLoading}
+            >
+              <Text style={styles.signupBtnText}>
+                {isLoading ? '⏳ Creating account...' : '→  Create Free Account'}
               </Text>
+            </TouchableOpacity>
+
+            {/* Trust bar */}
+            <View style={styles.trustBar}>
+              <Text style={styles.trustItem}>🔒 Secure</Text>
+              <Text style={styles.trustItem}>🆓 Free Forever</Text>
+              <Text style={styles.trustItem}>🎓 Certified</Text>
             </View>
+          </View>
 
-            <Text style={styles.heroTitle}>
-              Join the coding{'\n'}
-              <Text style={styles.heroHighlight}>revolution</Text>
-            </Text>
-            <Text style={styles.heroDesc}>
-              50,000+ students are already learning. Start your journey today — free!
-            </Text>
-
-            {/* Card */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Create Account</Text>
-              <Text style={styles.cardSubtitle}>Join CodingKida today — it's free</Text>
-
-              {/* Name */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Full Name</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>👤</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Your full name"
-                    placeholderTextColor="#64748b"
-                    value={name}
-                    onChangeText={setName}
-                    autoCapitalize="words"
-                  />
-                </View>
-              </View>
-
-              {/* Email */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Email</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>✉</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="you@example.com"
-                    placeholderTextColor="#64748b"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-
-              {/* Password */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Password</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>🔒</Text>
-                  <TextInput
-                    style={[styles.input, { paddingRight: 48 }]}
-                    placeholder="Min. 8 characters"
-                    placeholderTextColor="#64748b"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
-                  />
-                  <TouchableOpacity
-                    style={styles.eyeBtn}
-                    onPress={() => setShowPassword(!showPassword)}
-                  >
-                    <Text style={{ fontSize: 16 }}>{showPassword ? '🙈' : '👁'}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Signup Button */}
-              <TouchableOpacity
-                style={[styles.signupBtn, isLoading && styles.btnDisabled]}
-                onPress={handleSignup}
-                disabled={isLoading}
-              >
-                <Text style={styles.signupBtnText}>
-                  {isLoading ? '⏳ Creating account...' : '→  Create Free Account'}
-                </Text>
-              </TouchableOpacity>
-
-              {/* Trust bar */}
-              <View style={styles.trustBar}>
-                <Text style={styles.trustItem}>🔒 Secure</Text>
-                <Text style={styles.trustItem}>🆓 Free Forever</Text>
-                <Text style={styles.trustItem}>🎓 Certified</Text>
-              </View>
-            </View>
-
-            {/* Login link */}
-            <View style={styles.loginRow}>
-              <Text style={styles.loginText}>Already have an account? </Text>
-              <Link href="/(auth)/login">
-                <Text style={styles.loginLink}>Log In</Text>
-              </Link>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
+          {/* Login link */}
+          <View style={styles.loginRow}>
+            <Text style={styles.loginText}>Already have an account? </Text>
+            <Link href="/(auth)/login">
+              <Text style={styles.loginLink}>Log In</Text>
+            </Link>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );

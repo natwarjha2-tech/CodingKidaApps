@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView,
-  Platform, Alert, Image,
+  StyleSheet, ScrollView, Alert, Image,
+  Keyboard, Platform,
 } from 'react-native';
 import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,7 +14,29 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const { login, isLoading } = useAuth();
+  const scrollRef = useRef<ScrollView>(null);
+
+  // Listen for keyboard show/hide to add bottom padding
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      // Auto scroll to bottom so all form content is visible
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -35,9 +57,12 @@ export default function LoginScreen() {
       <View style={styles.blob3} />
 
       <SafeAreaView style={{ flex: 1 }}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={{ flex: 1 }}
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: keyboardHeight > 0 ? keyboardHeight : 40 }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
         >
           <View style={styles.content}>
             {/* Logo */}
@@ -49,7 +74,7 @@ export default function LoginScreen() {
               />
             </View>
 
-            {/* Welcome Back heading — matches image exactly */}
+            {/* Welcome Back heading */}
             <View style={styles.heroRow}>
               <Text style={styles.heroTitle}>
                 Welcome <Text style={styles.heroAccent}>Back!</Text>
@@ -142,7 +167,7 @@ export default function LoginScreen() {
               </Link>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );
@@ -153,7 +178,8 @@ const styles = StyleSheet.create({
   blob1: { position: 'absolute', width: 300, height: 300, borderRadius: 150, backgroundColor: '#3730a3', top: -100, left: -80, opacity: 0.35 },
   blob2: { position: 'absolute', width: 250, height: 250, borderRadius: 125, backgroundColor: '#4338ca', bottom: -80, right: -50, opacity: 0.3 },
   blob3: { position: 'absolute', width: 200, height: 200, borderRadius: 100, backgroundColor: '#6366f1', top: '40%', right: -60, opacity: 0.2 },
-  content: { flex: 1, justifyContent: 'center', padding: 20 },
+  content: { padding: 20 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center' },
 
   logoRow: { alignItems: 'center', marginBottom: 20 },
   logoImage: { width: 120, height: 120, borderRadius: 60 },

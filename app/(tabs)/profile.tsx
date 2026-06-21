@@ -6,7 +6,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '@/hooks';
 import { useAuthStore } from '@/store';
 import { StorageService, USER_KEY } from '@/services/storage.service';
-import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
 import { apiClient, studentApi } from '@/api';
 
@@ -16,7 +15,6 @@ export default function ProfileScreen() {
   const updateUser = useAuthStore((s) => s.updateUser);
 
   // Coins modal state
-  const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(user?.avatarUrl ?? null);
   const [uploading, setUploading] = useState(false);
 
@@ -120,20 +118,11 @@ export default function ProfileScreen() {
 
   const handleMenuPress = (label: string) => {
     switch (label) {
-      case 'My Coins':
-        setCoinsModalVisible(true);
-        break;
       case 'Change Password':
         router.push('/change-password');
         break;
       case 'My Report':
         router.push('/my-report');
-        break;
-      case 'Achievements':
-        router.push('/achievements');
-        break;
-      case 'Weekly Streak':
-        router.push('/streak-history');
         break;
       case 'Refer & Earn':
         router.push('/refer-earn');
@@ -148,7 +137,6 @@ export default function ProfileScreen() {
 
   const menuItems = [
     { emoji: '📊', label: 'My Report', color: Colors.primary },
-    { emoji: '🪙', label: 'My Coins', color: '#fbbf24' },
     { emoji: '🎁', label: 'Refer & Earn', color: Colors.success },
     { emoji: '🔒', label: 'Change Password', color: Colors.purple },
     { emoji: '❤️', label: 'Help & Support', color: Colors.secondary },
@@ -190,9 +178,14 @@ export default function ProfileScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.profileName}>{user?.name ?? '—'}</Text>
             <Text style={styles.profileEmail}>{user?.email ?? '—'}</Text>
-            <TouchableOpacity style={styles.editProfileBtn} onPress={() => router.push('/edit-profile')}>
-              <Text style={styles.editProfileText}>✏️ Edit Profile</Text>
-            </TouchableOpacity>
+            <View style={styles.profileBtnRow}>
+              <TouchableOpacity style={[styles.editProfileBtn, styles.viewProfileBtn]} onPress={() => router.push({ pathname: '/edit-profile', params: { mode: 'view' } })}>
+                <Text style={[styles.editProfileText, styles.viewProfileText]}>👁️ View Profile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.editProfileBtn} onPress={() => router.push('/edit-profile')}>
+                <Text style={styles.editProfileText}>✏️ Edit Profile</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -266,9 +259,6 @@ export default function ProfileScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* Coins Modal */}
-      <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
     </SafeAreaView>
   );
 }
@@ -321,13 +311,22 @@ const styles = StyleSheet.create({
   profileName: { fontSize: 20, fontWeight: '800', color: '#fff', marginBottom: 4 },
   profileEmail: { color: Colors.muted, fontSize: 13, marginBottom: 10 },
   editProfileBtn: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 12, paddingVertical: 4,
     borderRadius: 50,
     backgroundColor: Colors.primaryLight,
     borderWidth: 1, borderColor: Colors.primary,
   },
   editProfileText: { fontSize: 11, fontWeight: '700', color: Colors.primary },
+  viewProfileBtn: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  viewProfileText: { color: 'rgba(255,255,255,0.7)' },
+  profileBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
 
   // Menu
   menuSection: { paddingHorizontal: 16, gap: 8 },

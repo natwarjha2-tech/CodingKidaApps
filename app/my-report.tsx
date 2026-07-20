@@ -266,7 +266,7 @@ export default function MyReportScreen() {
             </View>
 
             {/* ═══════════ ACHIEVEMENTS SECTION ═══════════ */}
-            <Text style={styles.sectionTitle}>🏆 Achievements</Text>
+            <Text style={styles.sectionTitle}>🏆 Recent Achievement</Text>
             {achievementsLoading ? (
               <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
             ) : achievements.length === 0 ? (
@@ -296,7 +296,39 @@ export default function MyReportScreen() {
                   ))}
                 </View>
 
-                {/* Filtered badge details */}
+                {/* Show only LAST achievement (most recent) */}
+                {!selectedBadgeType && achievements.length > 0 && (
+                  <View style={styles.achievementCard}>
+                    <View style={styles.achievementInfo}>
+                      <Text style={styles.achievementTitle}>{achievements[0].title}</Text>
+                      {achievements[0].courseTitle && (
+                        <Text style={styles.achievementMeta}>
+                          {achievements[0].courseTitle}
+                          {achievements[0].lessonTitle ? ` · ${achievements[0].lessonTitle}` : ''}
+                        </Text>
+                      )}
+                      <View style={styles.achievementStatsRow}>
+                        {achievements[0].score != null && (
+                          <View style={styles.achievementStatBadge}>
+                            <Text style={styles.achievementStatText}>Score: {achievements[0].score}</Text>
+                          </View>
+                        )}
+                        {achievements[0].rank != null && (
+                          <View style={[styles.achievementStatBadge, { backgroundColor: Colors.warningLight }]}>
+                            <Text style={[styles.achievementStatText, { color: Colors.warning }]}>
+                              Rank #{achievements[0].rank}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.achievementDate}>
+                        {formatDate(achievements[0].earnedAt || achievements[0].createdAt)}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Filtered badge details (when badge card tapped) */}
                 {selectedBadgeType && (
                   <View style={styles.badgeDetailSection}>
                     <Text style={styles.badgeDetailTitle}>
@@ -305,7 +337,7 @@ export default function MyReportScreen() {
                     {filteredAchievements.length === 0 ? (
                       <Text style={styles.badgeDetailEmpty}>No {badgeLabel[selectedBadgeType]} badges earned yet.</Text>
                     ) : (
-                      filteredAchievements.map((achievement) => (
+                      filteredAchievements.slice(0, 3).map((achievement) => (
                         <View key={achievement.id} style={styles.achievementCard}>
                           <View style={styles.achievementInfo}>
                             <Text style={styles.achievementTitle}>{achievement.title}</Text>

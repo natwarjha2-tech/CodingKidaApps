@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks';
 import { useAuthStore } from '@/store';
 import { StorageService, USER_KEY } from '@/services/storage.service';
@@ -13,6 +14,31 @@ export default function ProfileScreen() {
   const { user, logout } = useAuth();
   const token = useAuthStore((s) => s.token);
   const updateUser = useAuthStore((s) => s.updateUser);
+  const queryClient = useQueryClient();
+
+  // Pre-fetch data for sub-pages so they open instantly (no loading spinner)
+  useEffect(() => {
+    queryClient.prefetchQuery({
+      queryKey: ['student-progress'],
+      queryFn: () => apiClient.get('/api/student/progress').then(r => r.data),
+      staleTime: 1000 * 60 * 5,
+    });
+    queryClient.prefetchQuery({
+      queryKey: ['my-orders'],
+      queryFn: () => apiClient.get('/api/student/orders').then(r => r.data),
+      staleTime: 1000 * 60 * 5,
+    });
+    queryClient.prefetchQuery({
+      queryKey: ['mall'],
+      queryFn: () => apiClient.get('/api/mall').then(r => r.data),
+      staleTime: 1000 * 60 * 2,
+    });
+    queryClient.prefetchQuery({
+      queryKey: ['app-ratings'],
+      queryFn: () => apiClient.get('/api/feedback/lesson?lessonId=app_rating').then(r => r.data),
+      staleTime: 1000 * 60 * 2,
+    });
+  }, []);
 
   // Coins modal state
   const [avatarUri, setAvatarUri] = useState<string | null>(user?.avatarUrl ?? null);
@@ -124,8 +150,23 @@ export default function ProfileScreen() {
       case 'My Report':
         router.push('/my-report');
         break;
+      case 'Student Progress':
+        router.push('/student-progress');
+        break;
+      case 'My Purchases':
+        router.push('/my-purchases');
+        break;
+      case 'CK Mall':
+        router.push('/ck-mall');
+        break;
       case 'Refer & Earn':
         router.push('/refer-earn');
+        break;
+      case 'About Us':
+        router.push('/about-us');
+        break;
+      case 'Rate Us':
+        router.push('/rate-us');
         break;
       case 'Help & Support':
         router.push('/help-support');
@@ -137,8 +178,13 @@ export default function ProfileScreen() {
 
   const menuItems = [
     { emoji: '📊', label: 'My Report', color: Colors.primary },
+    { emoji: '📈', label: 'Student Progress', color: Colors.success },
+    { emoji: '🛒', label: 'My Purchases', color: Colors.warning },
+    { emoji: '🏪', label: 'CK Mall', color: Colors.coin },
     { emoji: '🎁', label: 'Refer & Earn', color: Colors.success },
     { emoji: '🔒', label: 'Change Password', color: Colors.purple },
+    { emoji: 'ℹ️', label: 'About Us', color: Colors.muted },
+    { emoji: '⭐', label: 'Rate Us', color: Colors.warning },
     { emoji: '❤️', label: 'Help & Support', color: Colors.secondary },
   ];
 

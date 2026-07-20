@@ -4,7 +4,7 @@
     "slug": "codingkidaapps",
     "version": "1.0.0",
     "scheme": "codingkida",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.codingkida.app"
+      "bundleIdentifier": "com.codingkida.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

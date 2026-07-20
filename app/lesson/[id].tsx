@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Alert } from 'react-native';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Alert, Keyboard, Platform } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
@@ -24,8 +24,11 @@ export default function LessonScreen() {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
-  const [exerciseCode, setExerciseCode] = useState('');
-  const [exerciseResult, setExerciseResult] = useState('');
+  const [quizScore, setQuizScore] = useState({ correct: 0, total: 0 });
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [quizAttemptedBefore, setQuizAttemptedBefore] = useState(false);
+  const [exerciseAnswers, setExerciseAnswers] = useState<Record<string, string>>({});
+  const [exerciseResults, setExerciseResults] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
   const lessonId = activeLesson?.id ?? id;
@@ -49,6 +52,15 @@ export default function LessonScreen() {
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  // Track keyboard visibility — collapse video when keyboard is open (like YouTube)
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   // PDF Viewer
   const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
@@ -73,6 +85,17 @@ export default function LessonScreen() {
   const { data: quizData } = useQuiz(lessonId);
   const { data: exerciseData } = useExercise(lessonId);
   const { data: homeworkData } = useHomework(lessonId);
+
+  // Check if quiz was previously attempted for this lesson
+  useEffect(() => {
+    if (lessonId) {
+      StorageService.getObject<string[]>('ck_quiz_attempted_lessons').then((attempted) => {
+        if (attempted && attempted.includes(lessonId)) {
+          setQuizAttemptedBefore(true);
+        }
+      });
+    }
+  }, [lessonId]);
 
   // Fetch weekly streak for this lesson
   const { data: streakData } = useQuery({
@@ -203,33 +226,65 @@ export default function LessonScreen() {
     if (selectedOption === null || quizzes.length === 0) return;
     setQuizSubmitted(true);
     const currentQuiz = quizzes[currentQuizIndex];
+    const isCorrect = selectedOption === currentQuiz.answer;
+
+    // Track score
+    setQuizScore(prev => ({
+      correct: prev.correct + (isCorrect ? 1 : 0),
+      total: prev.total + 1,
+    }));
+
+    // Check if this is last question
+    if (currentQuizIndex === quizzes.length - 1) {
+      setQuizCompleted(true);
+      // Mark lesson quiz as attempted (prevents future coin rewards)
+      if (!quizAttemptedBefore) {
+        const attempted = await StorageService.getObject<string[]>('ck_quiz_attempted_lessons') ?? [];
+        if (!attempted.includes(lessonId)) {
+          attempted.push(lessonId);
+          await StorageService.setObject('ck_quiz_attempted_lessons', attempted);
+        }
+      }
+    }
+
+    // Submit to backend (only awards coins on first attempt — backend enforces this)
     if (courseId && currentQuiz) {
       try {
-        await quizApi.submitAttempt({
+        const res = await quizApi.submitAttempt({
           quizId: currentQuiz.id,
           selected: selectedOption,
           courseId,
           lessonId,
         });
+        // Instantly refresh coins if awarded (Improvement #2)
+        if (res.coinsAwarded && res.coinsAwarded > 0) {
+          queryClient.invalidateQueries({ queryKey: ['coins'] });
+        }
       } catch {}
     }
   };
 
   const handleExerciseSubmit = async (exercise: any) => {
-    if (!exerciseCode.trim()) {
-      Alert.alert('Error', 'Please write your solution first.');
+    const answer = exerciseAnswers[exercise.id] || '';
+    if (!answer.trim()) {
+      Alert.alert('Error', 'Please type your answer first.');
       return;
     }
     setSubmitting(true);
+    setExerciseResults(prev => ({ ...prev, [exercise.id]: '' }));
     try {
       const res = await exerciseApi.submitAttempt({
         exerciseId: exercise.id,
-        code: exerciseCode,
+        code: answer,
         courseId,
       });
-      setExerciseResult(res.passed ? '✅ Correct! Well done!' : `⚠️ ${res.message ?? 'Not quite right. Try again!'}`);
+      if (res.passed) {
+        setExerciseResults(prev => ({ ...prev, [exercise.id]: '✅ Correct Answer! Well done!' }));
+      } else {
+        setExerciseResults(prev => ({ ...prev, [exercise.id]: `❌ Incorrect Answer: ${res.message || 'Try Again'}` }));
+      }
     } catch {
-      setExerciseResult('✅ Solution submitted!');
+      setExerciseResults(prev => ({ ...prev, [exercise.id]: '✅ Answer submitted for evaluation.' }));
     } finally {
       setSubmitting(false);
     }
@@ -269,17 +324,20 @@ export default function LessonScreen() {
         </Text>
       </View>
 
-      {/* Video Player */}
-      <VideoPlayer
-        videoUrl={activeLesson?.videoUrl ?? ''}
-        title={activeLesson?.title}
-        qualityUrls={activeLesson?.qualityUrls}
-        hlsQualities={activeLesson?.hlsQualities}
-        onComplete={handleVideoComplete}
-      />
+      {/* Video Player — collapses when keyboard is open for more scroll space */}
+      {!keyboardVisible && (
+        <VideoPlayer
+          videoUrl={activeLesson?.videoUrl ?? ''}
+          title={activeLesson?.title}
+          qualityUrls={activeLesson?.qualityUrls}
+          hlsQualities={activeLesson?.hlsQualities}
+          onComplete={handleVideoComplete}
+        />
+      )}
 
-      {/* Action Toolbar */}
-      <View style={styles.actionBar}>
+      {/* Action Toolbar — hidden when keyboard open */}
+      {!keyboardVisible && (
+        <View style={styles.actionBar}>
         <TouchableOpacity style={styles.actionBtn} onPress={saveToWatchlist}>
           <Text style={styles.actionIcon}>{savedToWatchlist ? '✅' : '📌'}</Text>
           <Text style={[styles.actionLabel, savedToWatchlist && { color: Colors.success }]}>
@@ -297,6 +355,7 @@ export default function LessonScreen() {
           <Text style={styles.actionLabel}>{totalCoins}</Text>
         </TouchableOpacity>
       </View>
+      )}
 
       {/* Tabs */}
       <View style={styles.tabs}>
@@ -314,7 +373,7 @@ export default function LessonScreen() {
       </View>
 
       {/* Tab Content */}
-      <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollViewRef} style={styles.tabContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
 
         {/* Notes Tab */}
         {activeTab === 'notes' && (
@@ -350,68 +409,85 @@ export default function LessonScreen() {
             <Text style={styles.cardTitle}>🧠 Quiz</Text>
             {quizzes.length > 0 ? (
               <View>
-                <Text style={styles.quizCounter}>
-                  Question {currentQuizIndex + 1} of {quizzes.length}
-                </Text>
-                <Text style={styles.question}>{quizzes[currentQuizIndex].question}</Text>
-                {quizzes[currentQuizIndex].options.map((opt, i) => {
-                  let bg = Colors.card;
-                  let border = Colors.border;
-                  if (quizSubmitted) {
-                    if (i === quizzes[currentQuizIndex].answer) { bg = Colors.successLight; border = Colors.success; }
-                    else if (i === selectedOption) { bg = Colors.dangerLight; border = Colors.danger; }
-                  } else if (i === selectedOption) {
-                    bg = Colors.primaryLight; border = Colors.primary;
-                  }
-                  return (
-                    <TouchableOpacity
-                      key={i}
-                      style={[styles.option, { backgroundColor: bg, borderColor: border }]}
-                      onPress={() => !quizSubmitted && setSelectedOption(i)}
-                      disabled={quizSubmitted}
-                    >
-                      <Text style={styles.optionLetter}>{['A','B','C','D'][i]}</Text>
-                      <Text style={styles.optionText}>{opt}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                {/* Previously attempted warning */}
+                {quizAttemptedBefore && !quizCompleted && (
+                  <View style={[styles.result, { backgroundColor: Colors.warningLight, borderColor: Colors.warning, marginBottom: 12, marginTop: 0 }]}>
+                    <Text style={[styles.resultText, { color: Colors.warning, fontWeight: '800' }]}>
+                      ⚠️ You attempted this quiz before. Try again only for Practice.
+                    </Text>
+                    <Text style={{ color: Colors.muted, fontSize: 11, marginTop: 4 }}>No coins or leaderboard changes on re-attempts.</Text>
+                  </View>
+                )}
 
-                {!quizSubmitted ? (
-                  <TouchableOpacity
-                    style={[styles.submitBtn, selectedOption === null && styles.submitBtnDisabled]}
-                    onPress={handleQuizSubmit}
-                    disabled={selectedOption === null}
-                  >
-                    <Text style={styles.submitBtnText}>Check Answer</Text>
-                  </TouchableOpacity>
+                {/* Quiz completed summary */}
+                {quizCompleted ? (
+                  <View style={[styles.result, styles.resultCorrect, { marginBottom: 16, marginTop: 0 }]}>
+                    <Text style={[styles.resultText, { fontWeight: '800', fontSize: 15 }]}>
+                      🎉 You completed this quiz with {quizScore.correct}/{quizzes.length} Correct
+                    </Text>
+                  </View>
                 ) : (
-                  <View>
-                    <View style={[
-                      styles.result,
-                      selectedOption === quizzes[currentQuizIndex].answer ? styles.resultCorrect : styles.resultWrong,
-                    ]}>
-                      <Text style={styles.resultText}>
-                        {selectedOption === quizzes[currentQuizIndex].answer ? '🎉 Correct!' : '❌ Incorrect.'}
-                      </Text>
-                    </View>
+                  <>
+                    <Text style={styles.quizCounter}>
+                      Question {currentQuizIndex + 1} of {quizzes.length}
+                    </Text>
+                    <Text style={styles.question}>{quizzes[currentQuizIndex].question}</Text>
+                    {quizzes[currentQuizIndex].options.map((opt, i) => {
+                      let bg = Colors.card;
+                      let border = Colors.border;
+                      if (quizSubmitted) {
+                        if (i === quizzes[currentQuizIndex].answer) { bg = Colors.successLight; border = Colors.success; }
+                        else if (i === selectedOption) { bg = Colors.dangerLight; border = Colors.danger; }
+                      } else if (i === selectedOption) {
+                        bg = Colors.primaryLight; border = Colors.primary;
+                      }
+                      return (
+                        <TouchableOpacity
+                          key={i}
+                          style={[styles.option, { backgroundColor: bg, borderColor: border }]}
+                          onPress={() => !quizSubmitted && setSelectedOption(i)}
+                          disabled={quizSubmitted}
+                        >
+                          <Text style={styles.optionLetter}>{['A','B','C','D'][i]}</Text>
+                          <Text style={styles.optionText}>{opt}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
 
-                    {currentQuizIndex < quizzes.length - 1 ? (
+                    {!quizSubmitted ? (
                       <TouchableOpacity
-                        style={[styles.submitBtn, { marginTop: 12, backgroundColor: Colors.success }]}
-                        onPress={() => {
-                          setCurrentQuizIndex(currentQuizIndex + 1);
-                          setSelectedOption(null);
-                          setQuizSubmitted(false);
-                        }}
+                        style={[styles.submitBtn, selectedOption === null && styles.submitBtnDisabled]}
+                        onPress={handleQuizSubmit}
+                        disabled={selectedOption === null}
                       >
-                        <Text style={styles.submitBtnText}>Next Question →</Text>
+                        <Text style={styles.submitBtnText}>Check Answer</Text>
                       </TouchableOpacity>
                     ) : (
-                      <View style={[styles.result, styles.resultCorrect, { marginTop: 12 }]}>
-                        <Text style={styles.resultText}>🎉 Quiz Complete! All {quizzes.length} questions attempted.</Text>
+                      <View>
+                        <View style={[
+                          styles.result,
+                          selectedOption === quizzes[currentQuizIndex].answer ? styles.resultCorrect : styles.resultWrong,
+                        ]}>
+                          <Text style={styles.resultText}>
+                            {selectedOption === quizzes[currentQuizIndex].answer ? '🎉 Correct!' : '❌ Incorrect.'}
+                          </Text>
+                        </View>
+
+                        {currentQuizIndex < quizzes.length - 1 && (
+                          <TouchableOpacity
+                            style={[styles.submitBtn, { marginTop: 12, backgroundColor: Colors.success }]}
+                            onPress={() => {
+                              setCurrentQuizIndex(currentQuizIndex + 1);
+                              setSelectedOption(null);
+                              setQuizSubmitted(false);
+                            }}
+                          >
+                            <Text style={styles.submitBtnText}>Next Question →</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     )}
-                  </View>
+                  </>
                 )}
               </View>
             ) : (
@@ -427,18 +503,12 @@ export default function LessonScreen() {
             {exercises.length > 0 ? exercises.map((ex) => (
               <View key={ex.id} style={styles.exerciseBlock}>
                 <Text style={styles.question}>{ex.description}</Text>
-                {ex.hints && ex.hints.length > 0 && (
-                  <View style={styles.hint}>
-                    <Text style={styles.hintText}>💡 {ex.hints[0]}</Text>
-                  </View>
-                )}
-                <Text style={styles.codeLabel}>Your Code:</Text>
                 <TextInput
                   style={styles.codeInput}
-                  placeholder={ex.starterCode ?? 'Write your solution here...'}
+                  placeholder="Type your answer here..."
                   placeholderTextColor={Colors.muted}
-                  value={exerciseCode}
-                  onChangeText={setExerciseCode}
+                  value={exerciseAnswers[ex.id] || ''}
+                  onChangeText={(text) => setExerciseAnswers(prev => ({ ...prev, [ex.id]: text }))}
                   multiline
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -448,15 +518,14 @@ export default function LessonScreen() {
                   onPress={() => handleExerciseSubmit(ex)}
                   disabled={submitting}
                 >
-                  <Text style={styles.submitBtnText}>{submitting ? 'Checking...' : 'Submit Solution'}</Text>
+                  <Text style={styles.submitBtnText}>{submitting ? 'Evaluating...' : 'Submit Answer'}</Text>
                 </TouchableOpacity>
-                {exerciseResult ? (
-                  <Text style={[
-                    styles.resultText,
-                    { color: exerciseResult.startsWith('✅') ? Colors.success : Colors.warning },
-                  ]}>
-                    {exerciseResult}
-                  </Text>
+                {exerciseResults[ex.id] ? (
+                  <View style={[styles.result, exerciseResults[ex.id].startsWith('✅') ? styles.resultCorrect : styles.resultWrong, { marginTop: 12 }]}>
+                    <Text style={[styles.resultText, { fontWeight: '800' }]}>
+                      {exerciseResults[ex.id]}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
             )) : (
@@ -615,11 +684,11 @@ const styles = StyleSheet.create({
   actionLabel: { color: Colors.muted, fontSize: 10, fontWeight: '600' },
   tabs: {
     flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.border,
-    backgroundColor: Colors.cardAlt,
+    backgroundColor: Colors.cardAlt, paddingHorizontal: 4,
   },
-  tab: { flex: 1, paddingVertical: Spacing.md, alignItems: 'center' },
+  tab: { flex: 1, paddingVertical: Spacing.md, alignItems: 'center', justifyContent: 'center', minWidth: 50 },
   tabActive: { borderBottomWidth: 2, borderBottomColor: Colors.primary },
-  tabText: { color: Colors.muted, fontSize: Typography.xs, fontWeight: FontWeight.medium },
+  tabText: { color: Colors.muted, fontSize: 10, fontWeight: FontWeight.medium, textAlign: 'center' },
   tabTextActive: { color: Colors.primary, fontWeight: FontWeight.bold },
   tabContent: { flex: 1 },
   card: {

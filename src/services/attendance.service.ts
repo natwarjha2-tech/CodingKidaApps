@@ -2,6 +2,11 @@ import { StorageService } from './storage.service';
 
 const ATTENDANCE_KEY = 'ck_attendance';
 
+// Maximum single session duration: 4 hours (anything above = device left open accidentally)
+const MAX_SESSION_MINS = 240;
+// Maximum daily total: 16 hours (reasonable cap — user can't actively learn more than this)
+const MAX_DAILY_MINS = 960;
+
 interface DayData {
   totalMins: number;
   sessions: { start: number; end: number }[];
@@ -29,20 +34,42 @@ export const AttendanceService = {
   recordEnd: async () => {
     if (!_sessionStart) return;
     const end = Date.now();
-    const mins = Math.round((end - _sessionStart) / 60000);
-    if (mins < 1) { _sessionStart = null; return; } // Ignore < 1 min sessions
+    let mins = Math.round((end - _sessionStart) / 60000);
+    _sessionStart = null;
+
+    // Ignore sessions less than 1 minute
+    if (mins < 1) return;
+
+    // Cap single session to MAX_SESSION_MINS (prevents overnight/stuck sessions)
+    if (mins > MAX_SESSION_MINS) mins = MAX_SESSION_MINS;
+
+    // Validate that session belongs to today (prevents cross-midnight issues)
+    const sessionDate = new Date(end).toISOString().split('T')[0];
+    const today = getTodayKey();
 
     const data = await AttendanceService.getData();
-    const today = getTodayKey();
 
     if (!data[today]) {
       data[today] = { totalMins: 0, sessions: [] };
     }
-    data[today].sessions.push({ start: _sessionStart, end });
-    data[today].totalMins += mins;
+
+    // Cap daily total to MAX_DAILY_MINS
+    const currentTotal = data[today].totalMins;
+    if (currentTotal >= MAX_DAILY_MINS) return; // Already at max
+
+    const allowedMins = Math.min(mins, MAX_DAILY_MINS - currentTotal);
+    data[today].sessions.push({ start: _sessionStart ?? (end - allowedMins * 60000), end });
+    data[today].totalMins += allowedMins;
+
+    // Cleanup: remove data older than 35 days (saves storage)
+    const cutoff = Date.now() - 35 * 24 * 60 * 60 * 1000;
+    for (const dateKey of Object.keys(data)) {
+      if (new Date(dateKey).getTime() < cutoff) {
+        delete data[dateKey];
+      }
+    }
 
     await StorageService.setObject(ATTENDANCE_KEY, data);
-    _sessionStart = null;
   },
 
   /**
@@ -54,12 +81,21 @@ export const AttendanceService = {
   },
 
   /**
-   * Get today's total minutes
+   * Get today's total minutes (capped + auto-fix corrupted data)
    */
   getTodayMins: async (): Promise<number> => {
     const data = await AttendanceService.getData();
     const today = getTodayKey();
-    return data[today]?.totalMins ?? 0;
+    const mins = data[today]?.totalMins ?? 0;
+
+    // Auto-fix: if corrupted data exceeds cap, reset today
+    if (mins > MAX_DAILY_MINS) {
+      data[today] = { totalMins: 0, sessions: [] };
+      await StorageService.setObject(ATTENDANCE_KEY, data);
+      return 0;
+    }
+
+    return mins;
   },
 
   /**
@@ -72,7 +108,7 @@ export const AttendanceService = {
     let total = 0;
     for (const [date, dayData] of Object.entries(data)) {
       if (new Date(date).getTime() >= weekAgo) {
-        total += dayData.totalMins;
+        total += Math.min(dayData.totalMins, MAX_DAILY_MINS);
       }
     }
     return total;
@@ -90,7 +126,7 @@ export const AttendanceService = {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       const key = date.toISOString().split('T')[0];
-      const mins = data[key]?.totalMins ?? 0;
+      const mins = Math.min(data[key]?.totalMins ?? 0, MAX_DAILY_MINS);
       calendar.push({
         date: key,
         day: date.getDate(),
@@ -112,5 +148,15 @@ export const AttendanceService = {
     const h = Math.floor(mins / 60);
     const m = mins % 60;
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  },
+
+  /**
+   * Reset today's data (for debugging/testing)
+   */
+  resetToday: async () => {
+    const data = await AttendanceService.getData();
+    const today = getTodayKey();
+    delete data[today];
+    await StorageService.setObject(ATTENDANCE_KEY, data);
   },
 };

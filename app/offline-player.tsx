@@ -1,7 +1,8 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import Video from 'react-native-video';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 /**
@@ -10,10 +11,6 @@ import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
  */
 export default function OfflinePlayerScreen() {
   const { uri, title } = useLocalSearchParams<{ uri: string; title: string }>();
-
-  const player = useVideoPlayer(uri || '', (p) => {
-    p.loop = false;
-  });
 
   if (!uri) {
     return (
@@ -44,11 +41,18 @@ export default function OfflinePlayerScreen() {
       </View>
 
       <View style={styles.playerContainer}>
-        <VideoView
-          player={player}
+        <Video
+          source={{ uri }}
           style={styles.video}
-          allowsFullscreen
-          allowsPictureInPicture
+          controls
+          resizeMode="contain"
+          fullscreenAutorotate={true}
+          onFullscreenPlayerWillPresent={() => {
+            ScreenOrientation.unlockAsync();
+          }}
+          onFullscreenPlayerWillDismiss={() => {
+            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          }}
         />
       </View>
 

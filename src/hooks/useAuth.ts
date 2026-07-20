@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '@/store';
 import { AuthService } from '@/services';
 import { StorageService, USER_KEY } from '@/services/storage.service';
@@ -16,21 +17,27 @@ export const useAuth = () => {
     async (payload: LoginPayload, rememberMe = false) => {
       setLoading(true);
       try {
-        queryClient.clear();
         const { token, user } = await AuthService.login(payload, rememberMe);
-        // Login response already has presigned avatarUrl from backend
-        // But fetch fresh one to guarantee it's valid
+
+        // Check if different user logged in — clear old cache
+        const prevCacheRaw = await AsyncStorage.getItem('ck_qcache_last_user');
+        if (prevCacheRaw && prevCacheRaw !== user.id) {
+          // Different user — clear previous user's cache
+          await AsyncStorage.removeItem('ck_qcache_' + prevCacheRaw);
+          queryClient.clear();
+        }
+        await AsyncStorage.setItem('ck_qcache_last_user', user.id);
+
+        // Fetch fresh avatar
         let finalUser = user;
         try {
           const avatarRes = await studentApi.getAvatar();
           if (avatarRes?.avatarUrl) {
             finalUser = { ...user, avatarUrl: avatarRes.avatarUrl };
-            // Save updated user with fresh presigned URL to SecureStore
             await StorageService.setObject(USER_KEY, finalUser);
           }
-        } catch {
-          // Avatar fetch fail — login still works with URL from login response
-        }
+        } catch {}
+
         setAuth(token, finalUser);
         router.replace('/(tabs)/dashboard');
       } finally {
@@ -44,23 +51,25 @@ export const useAuth = () => {
     async (payload: SignupPayload) => {
       setLoading(true);
       try {
-        queryClient.clear();
+        queryClient.clear(); // New user — always fresh
         const { token, user } = await AuthService.signup(payload);
+        await AsyncStorage.setItem('ck_qcache_last_user', user.id);
         setAuth(token, user);
         router.replace('/(tabs)/dashboard');
       } finally {
         setLoading(false);
       }
     },
-    [setAuth, setLoading]
+    [setAuth, setLoading, queryClient]
   );
 
   const logout = useCallback(async () => {
-    queryClient.clear();
+    // Keep query cache on disk — will be restored if same user logs back in
+    // Only clear in-memory cache (components will re-render from disk on next login)
     await AuthService.logout();
     clearAuth();
     router.replace('/(auth)/login');
-  }, [clearAuth, queryClient]);
+  }, [clearAuth]);
 
   return { token, user, isAuthenticated, isLoading, login, signup, logout };
 };

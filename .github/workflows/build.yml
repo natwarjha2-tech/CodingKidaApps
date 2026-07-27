@@ -24,7 +24,7 @@ jobs:
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+          token: ${{ secrets.EXPO_TOKEN_CODINGKIDA }}
           packager: npm
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
       - name: Build APK (preview profile)
         run: eas build --platform android --profile preview --non-interactive --wait
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN_CODINGKIDA }}
 
       - name: Get APK download URL from EAS
         id: get_apk
@@ -41,7 +41,7 @@ jobs:
           APK_URL=$(eas build:list --platform android --status finished --limit 1 --json --non-interactive | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); const b=JSON.parse(d); console.log(b[0].artifacts.buildUrl);")
           echo "apk_url=$APK_URL" >> $GITHUB_OUTPUT
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN_CODINGKIDA }}
 
       - name: Download APK from EAS
         run: |

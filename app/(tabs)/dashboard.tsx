@@ -1,15 +1,43 @@
-import { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, Image } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ImageBackground, Image, Animated } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store';
 import { useCourseStore } from '@/store';
-import { useDashboard, useCoins, useCourses, usePrefetchDashboard } from '@/hooks';
+import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll } from '@/hooks';
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
+import { getUnreadCount } from '@/services/notification.service';
+
+// Real subject logos (transparent PNGs in assets/logos). Loaded safely — a
+// missing file falls back to the emoji tile below, never crashes.
+const SUBJECT_LOGOS: Record<string, any> = (() => {
+  const m: Record<string, any> = {};
+  try { m.c = require('../../assets/logos/c.png'); } catch {}
+  try { m.java = require('../../assets/logos/java.png'); } catch {}
+  try { m.python = require('../../assets/logos/python.png'); } catch {}
+  try { m.ai = require('../../assets/logos/ai.png'); } catch {}
+  return m;
+})();
+
+// Subject logo/tint for the "Recommended for You" cards (derived from the
+// course title — UI only, no logic depends on this). `logo` (if present) is a
+// real image; otherwise `icon` emoji is shown.
+function subjectVisual(title: string): { icon: string; bg: string; ink: string; logo?: any } {
+  const t = (title || '').toLowerCase();
+  if (t.includes('python')) return { icon: '🐍', bg: '#E4EEF7', ink: '#3776AB', logo: SUBJECT_LOGOS.python };
+  if (t.includes('java') && !t.includes('javascript')) return { icon: '☕', bg: '#FFE3D3', ink: '#EA6C2B', logo: SUBJECT_LOGOS.java };
+  if (t.includes('javascript') || t === 'js' || t.includes(' js')) return { icon: 'JS', bg: '#FFF6D6', ink: '#C9A100' };
+  if (t.includes('react')) return { icon: '⚛️', bg: '#E1F3FB', ink: '#149ECA' };
+  if (t.includes('ai') || t.includes('intelligence')) return { icon: '🧠', bg: '#241B3D', ink: '#B98BFF', logo: SUBJECT_LOGOS.ai };
+  if (t.includes('web') || t.includes('html')) return { icon: '🌐', bg: '#FDEAD9', ink: '#E35D2B' };
+  if (t.includes('node')) return { icon: '🟢', bg: '#E6F5E6', ink: '#3C873A' };
+  if (t === 'c' || t.startsWith('c ') || t.includes('c programming') || t.includes('c++') || t.includes('c#')) return { icon: 'C', bg: '#4A78E0', ink: '#FFFFFF', logo: SUBJECT_LOGOS.c };
+  return { icon: '📘', bg: '#EEE9FF', ink: '#7A3BFF' };
+}
 
 export default function DashboardScreen() {
   const user = useAuthStore((s) => s.user);
@@ -17,13 +45,78 @@ export default function DashboardScreen() {
   const { data: coinsData } = useCoins();
   const { data: allCoursesData } = useCourses('All', '');
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
   const lessonContext = useCourseStore((s) => s.lessonContext);
 
   // Prefetch leaderboard, achievements & streak so child screens open instantly
   usePrefetchDashboard();
 
+  // Fetch unread notification count
+  useEffect(() => {
+    getUnreadCount().then(setNotifUnread).catch(() => {});
+  }, []);
+
+  // ── Unified "refresh entire app" (same behaviour everywhere): invalidate ALL
+  // queries → whole app refetches fresh from server, bypassing staleTime. ──
+  const { refreshAll: handleRefreshAll, refreshing, spin } = useRefreshAll(setNotifUnread);
+
   const enrolledCount = data?.enrolledCount ?? 0;
   const totalCoins = coinsData?.totalCoins ?? 0;
+
+  // Coins-based level badge (mirrors desktop updateLevelBadge: floor(coins/50)+1)
+  const LEVEL_TITLES = ['Beginner', 'Starter', 'Junior Coder', 'Coder', 'Pro Coder', 'Expert', 'Master', 'Legend'];
+  const userLevel = Math.floor(totalCoins / 50) + 1;
+  const userLevelTitle = LEVEL_TITLES[Math.min(userLevel - 1, LEVEL_TITLES.length - 1)];
+
+  // First name only for the welcome card (e.g. "Avinash Raj Anand" → "Avinash")
+  const firstName = (user?.name?.trim().split(/\s+/)[0]) || 'Learner';
+
+  // Videos/lessons completed count (sum across enrolled courses — same as completed-videos screen)
+  const videosCompleted = (data?.enrolledCourses ?? []).reduce((sum: number, c: any) => sum + (c.completedLessons ?? 0), 0);
+
+  // Continue Learning enrichment (mirrors desktop): language chip, difficulty, XP, progress text, time-left
+  const resumePct = resumeData?.progressPercent ?? 0;
+  const resumeCourseTitle = (resumeData?.courseTitle || '').toLowerCase();
+  const resumeLangChip =
+    resumeCourseTitle.includes('python') ? 'PYTHON' :
+    (resumeCourseTitle.includes('java') && !resumeCourseTitle.includes('javascript')) ? 'JAVA' :
+    resumeCourseTitle.includes('javascript') || resumeCourseTitle.includes(' js') ? 'JS' :
+    (resumeCourseTitle === 'c' || resumeCourseTitle.startsWith('c ') || resumeCourseTitle.includes('c programming')) ? 'C' :
+    resumeCourseTitle.includes('react') ? 'REACT' :
+    resumeCourseTitle.includes('html') || resumeCourseTitle.includes('web') ? 'WEB' :
+    resumeCourseTitle.includes('node') ? 'NODE' : '';
+  const resumeDifficulty =
+    resumePct >= 70 ? { label: '🟠 Advanced', color: '#fdba74' } :
+    resumePct >= 30 ? { label: '🟡 Intermediate', color: '#fde047' } :
+    { label: '🟢 Beginner', color: '#6ee7b7' };
+  const resumeXp = resumePct >= 70 ? 50 : resumePct >= 30 ? 30 : 20;
+  const resumeProgressText =
+    resumePct >= 100 ? '🏆 Quest Complete!' :
+    resumePct >= 90 ? `🔥 Almost done! ${resumePct}%` :
+    resumePct >= 50 ? `⚡ Halfway there! ${resumePct}%` :
+    resumePct > 0 ? `⚡ Just started ${resumePct}%` :
+    '🚀 Ready to start!';
+
+  // Weekly Challenge + streak pips (mirrors desktop)
+  const { data: streakSummary } = useWeeklyStreakSummary();
+  const streakCompleted = streakSummary?.completedCount ?? 0;
+  const streakTotal = streakSummary?.totalCount ?? 0;
+  const STREAK_GOAL = 7;
+  const filledPips = Math.min(streakCompleted, STREAK_GOAL);
+  const wcPercent = streakTotal > 0 ? Math.round((streakCompleted / streakTotal) * 100) : 0;
+  const wcDescription = streakTotal === 0
+    ? 'Enroll in a course to unlock coding challenges!'
+    : streakCompleted >= streakTotal
+      ? "All challenges completed! You're a champ! 🎉"
+      : `Complete ${streakTotal} coding challenges and earn 50 coins!`;
+  const wcReward = (streakCompleted >= streakTotal && streakTotal > 0)
+    ? '✅ 50 Coins earned!'
+    : '+50 Coins on completion';
+  const streakFooter = filledPips === 0
+    ? "Let's begin! 🔥"
+    : (STREAK_GOAL - filledPips) <= 0
+      ? 'Goal reached! 🎉'
+      : `${STREAK_GOAL - filledPips} days to goal`;
 
   // Fetch achievements to get latest badge
   const { data: achievementsData } = useQuery({
@@ -62,105 +155,210 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Topbar: logo + tagline + refresh + notification bell */}
+      <View style={styles.topbar}>
+        <View>
+          <Text style={styles.topbarTitle}>
+            Coding<Text style={styles.logoK}>K</Text><Text style={styles.logoI}>i</Text><Text style={styles.logoD}>d</Text><Text style={styles.logoA}>a</Text>
+          </Text>
+          <Text style={styles.topbarTagline}>Learn  •  Practice  •  Grow</Text>
+        </View>
+        <View style={styles.topbarActions}>
+          {/* Coins widget — tap opens Coins modal (mirrors desktop topbar coins) */}
+          <TouchableOpacity
+            style={styles.topbarCoins}
+            onPress={() => setCoinsModalVisible(true)}
+            activeOpacity={0.7}
+            accessibilityLabel="Coins"
+          >
+            <Text style={styles.topbarCoinsEmoji}>🪙</Text>
+            <Text style={styles.topbarCoinsText}>{totalCoins}</Text>
+          </TouchableOpacity>
+
+          {/* Refresh button — pulls latest data from server (bypasses cache) */}
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={handleRefreshAll}
+            activeOpacity={0.7}
+            disabled={refreshing}
+            accessibilityLabel="Refresh data"
+          >
+            <Animated.Text style={[styles.iconText, { transform: [{ rotate: spin }] }]}>🔄</Animated.Text>
+          </TouchableOpacity>
+
+          {/* Notification bell */}
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push('/notifications')}
+            activeOpacity={0.7}
+            accessibilityLabel="Notifications"
+          >
+            <Text style={styles.iconText}>🔔</Text>
+            {notifUnread > 0 && (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText}>{notifUnread > 99 ? '99+' : notifUnread}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />}
+        refreshControl={<RefreshControl refreshing={isRefetching || refreshing} onRefresh={handleRefreshAll} tintColor={Colors.primary} />}
       >
-        {/* Welcome Banner wrapper — needed to position coins badge outside overflow:hidden */}
+        {/* Welcome Card — banner artwork as background, dynamic native UI on top.
+            Data/navigation unchanged — only the visual treatment is new. */}
         <View style={styles.welcomeWrapper}>
-          {/* Welcome Banner */}
-          <View style={styles.welcomeBanner}>
-            {/* Radial glow */}
-            <View style={styles.welcomeGlow} />
-
+          <ImageBackground
+            source={require('../../assets/welcome-banner.png')}
+            style={styles.welcomeBanner}
+            imageStyle={styles.welcomeBannerImg}
+            resizeMode="cover"
+          >
             <View style={styles.welcomeLeft}>
-              <Text style={styles.welcomeText}>
-                Welcome, {'\n'}
-                <Text style={styles.welcomeName}>{user?.name ?? 'Learner'}! 👋</Text>
-              </Text>
-              <Text style={styles.welcomeSubtitle}>Keep learning, keep growing. You're doing great!</Text>
-              <TouchableOpacity style={styles.continueBtn} onPress={() => router.push('/(tabs)/courses')}>
-                <Text style={styles.continueBtnText}>Continue Learning →</Text>
-              </TouchableOpacity>
+              {/* Level badge (coins-based) — mirrors desktop */}
+              <View style={styles.levelBadge}>
+                <Text style={styles.levelStar}>⭐</Text>
+                <Text style={styles.levelText}>Level {userLevel} · {userLevelTitle}</Text>
+              </View>
+              <Text style={styles.welcomeText}>Welcome back,</Text>
+              <Text style={styles.welcomeName} numberOfLines={1}>{firstName}! 👋</Text>
+              <Text style={styles.welcomeSubtitle}>Keep learning,</Text>
+              <Text style={styles.welcomeSubtitle}>keep growing.</Text>
             </View>
 
-            {/* Student Illustration */}
-            <Image
-              source={require('../../assets/student.png')}
-              style={styles.studentImage}
-              resizeMode="contain"
-            />
-          </View>
-
-          {/* Coins badge — outside overflow:hidden so touch works */}
-          <TouchableOpacity style={styles.coinsBadge} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7}>
-            <Text style={styles.coinsEmoji}>🪙</Text>
-            <Text style={styles.coinsText}>{totalCoins}</Text>
-          </TouchableOpacity>
+            {/* Continue Learning — pinned to the card's bottom-left */}
+            <TouchableOpacity style={styles.continueBtn} onPress={() => router.push('/(tabs)/courses')} activeOpacity={0.9}>
+              <Text style={styles.continueBtnText}>Continue Learning  →</Text>
+            </TouchableOpacity>
+          </ImageBackground>
         </View>
 
-        {/* Stats Row — Enrolled Courses + Latest Badge */}
+        {/* Stats Row — 2 thin cards in one row: Enrolled Courses + Latest Badge */}
         <View style={styles.statsGrid}>
-          {/* Enrolled Courses Card */}
+          {/* Enrolled Courses */}
           <TouchableOpacity
-            style={[styles.statCard, { borderColor: `${Colors.primary}20` }]}
+            style={styles.statCard}
             onPress={() => router.push('/enrolled-courses')}
-            activeOpacity={0.7}
+            activeOpacity={0.8}
           >
-            <View style={[styles.statGlow, { backgroundColor: 'rgba(108,71,255,0.25)' }]} />
-            <View style={[styles.statIconWrap, { backgroundColor: `${Colors.primary}20`, borderColor: `${Colors.primary}40` }]}>
+            <View style={[styles.statIconWrap, { backgroundColor: L.purpleSoft }]}>
               <Text style={styles.statEmoji}>📚</Text>
             </View>
-            <Text style={styles.statValue}>{isLoading ? '—' : enrolledCount}</Text>
-            <Text style={styles.statLabel}>Enrolled Courses</Text>
+            <View style={styles.statTextWrap}>
+              <Text style={styles.statValue}>{isLoading ? '—' : enrolledCount}</Text>
+              <Text style={styles.statLabel} numberOfLines={1}>Enrolled Courses</Text>
+            </View>
+            <Text style={styles.statChevron}>›</Text>
           </TouchableOpacity>
 
-          {/* Latest Achievement Badge Card — always visible */}
+          {/* Latest Achievement Badge */}
           <TouchableOpacity
-            style={[styles.statCard, { borderColor: `${Colors.warning}20` }]}
+            style={[styles.statCard, styles.statCardAmber]}
             onPress={() => router.push('/achievements')}
-            activeOpacity={0.7}
+            activeOpacity={0.8}
           >
-            <View style={[styles.statGlow, { backgroundColor: 'rgba(245,158,11,0.25)' }]} />
-            <View style={[styles.statIconWrap, { backgroundColor: `${Colors.warning}20`, borderColor: `${Colors.warning}40` }]}>
+            <View style={[styles.statIconWrap, { backgroundColor: '#FCE4B8' }]}>
               <Text style={styles.statEmoji}>{latestBadge ? (badgeEmoji[latestBadge.badgeType] || '🏅') : '🏆'}</Text>
             </View>
-            <Text style={styles.latestBadgeTitle} numberOfLines={1}>
-              {latestBadge ? latestBadge.title : 'No Badges Yet'}
-            </Text>
-            <Text style={styles.statLabel}>{latestBadge ? 'Latest Badge' : 'Earn your first badge!'}</Text>
+            <View style={styles.statTextWrap}>
+              <Text style={styles.latestBadgeTitle} numberOfLines={1}>
+                {latestBadge ? latestBadge.title : 'No Badges Yet'}
+              </Text>
+              <Text style={styles.statLabel} numberOfLines={1}>{latestBadge ? 'Latest Badge' : 'Earn your first badge!'}</Text>
+            </View>
+            <Text style={styles.statChevron}>›</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Continue Learning */}
+        {/* Continue Learning (enriched — mirrors desktop) */}
         {resumeData && (
-          <TouchableOpacity
-            style={styles.continueCard}
-            onPress={() => {
-              if (resumeData.lessonId) {
-                router.push(`/lesson/${resumeData.lessonId}`);
-              } else {
-                router.push(`/course/${resumeData.courseId}`);
-              }
-            }}
-          >
-            <View style={styles.continueThumbnail}>
-              <Text style={styles.continueThumbnailIcon}>▶</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.continueCourseTitle}>{resumeData.courseTitle}</Text>
-              <Text style={styles.continueMeta}>
-                {resumeData.moduleTitle} · {resumeData.lessonTitle}
-              </Text>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${resumeData.progressPercent}%` as any }]} />
+          <>
+            <View style={styles.continueHeader}>
+              <Text style={styles.continueHeaderTitle}>Continue Learning ⚡</Text>
+              <View style={styles.continueXpChip}>
+                <Text style={styles.continueXpChipText}>⭐ Earn +{resumeXp} XP</Text>
               </View>
             </View>
-            <View style={styles.resumeBtn}>
-              <Text style={styles.resumeBtnText}>Resume ▶</Text>
-            </View>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.continueCard}
+              onPress={() => {
+                if (resumeData.lessonId) {
+                  router.push(`/lesson/${resumeData.lessonId}`);
+                } else {
+                  router.push(`/course/${resumeData.courseId}`);
+                }
+              }}
+            >
+              <View style={styles.continueThumbnail}>
+                <Text style={styles.continueThumbnailIcon}>▶</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                {/* Title + language chip */}
+                <View style={styles.continueTitleRow}>
+                  <Text style={styles.continueCourseTitle} numberOfLines={1}>{resumeData.courseTitle}</Text>
+                  {resumeLangChip ? (
+                    <View style={styles.continueLangChip}><Text style={styles.continueLangChipText}>{resumeLangChip}</Text></View>
+                  ) : null}
+                </View>
+                {/* Difficulty badge */}
+                <View style={[styles.continueDiffBadge, { borderColor: `${resumeDifficulty.color}55` }]}>
+                  <Text style={[styles.continueDiffText, { color: resumeDifficulty.color }]}>{resumeDifficulty.label}</Text>
+                </View>
+                <Text style={styles.continueMeta} numberOfLines={1}>
+                  {resumeData.moduleTitle} · {resumeData.lessonTitle}
+                </Text>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${resumePct}%` as any }]} />
+                </View>
+                <Text style={styles.continueProgressText}>{resumeProgressText}</Text>
+              </View>
+              <View style={styles.resumeBtn}>
+                <Text style={styles.resumeBtnText}>Resume ▶</Text>
+              </View>
+            </TouchableOpacity>
+          </>
         )}
+
+        {/* Weekly Challenge card (driven by weekly-streak data) */}
+        <View style={styles.wcCard}>
+          {/* CodingKida calendar art — right side, doesn't cover text */}
+          <ImageBackground
+            source={require('../../assets/demo-calendar.png')}
+            style={styles.wcArt}
+            resizeMode="contain"
+          />
+          <View style={styles.wcHeader}>
+            <Text style={styles.wcTitle}>🔥 Weekly Challenge</Text>
+            <Text style={styles.wcProgressText}>{streakCompleted} / {streakTotal}</Text>
+          </View>
+          <View style={styles.wcProgressBarWrap}>
+            <View style={styles.wcProgressBar}>
+              <View style={[styles.wcProgressFill, { width: `${wcPercent}%` as any }]} />
+            </View>
+          </View>
+          <Text style={styles.wcDescription}>{wcDescription}</Text>
+          <Text style={styles.wcReward}>{wcReward}</Text>
+
+          {/* 7-day streak pips */}
+          <View style={styles.streakPipsRow}>
+            {Array.from({ length: STREAK_GOAL }, (_, i) => {
+              const isFilled = i < filledPips;
+              const isNext = i === filledPips && filledPips < STREAK_GOAL;
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.streakPip,
+                    isFilled && styles.streakPipFilled,
+                    isNext && styles.streakPipNext,
+                  ]}
+                />
+              );
+            })}
+          </View>
+          <Text style={styles.streakFooter}>{streakFooter}</Text>
+        </View>
 
         {/* Recommended for You */}
         <View style={styles.sectionHeader}>
@@ -170,40 +368,67 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {(allCoursesData?.courses ?? []).slice(0, 4).map((course) => (
-          <TouchableOpacity
-            key={course.id}
-            style={styles.courseCard}
-            onPress={() => router.push(`/course/${course.id}`)}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.courseTitle}>{course.title || ''}</Text>
-              <Text style={styles.courseMeta}>{course.subtitle || ''}</Text>
-            </View>
-            <View style={[styles.priceBadge, { backgroundColor: course.isFree ? Colors.successLight : Colors.primaryLight }]}>
-              <Text style={[styles.priceText, { color: course.isFree ? Colors.success : Colors.purple }]}>
-                {course.isFree ? 'Free' : 'Pro'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.recRow}
+          snapToInterval={174}
+          decelerationRate="fast"
+        >
+          {(allCoursesData?.courses ?? []).slice(0, 4).map((course) => {
+            const sv = subjectVisual(course.title || '');
+            return (
+              <TouchableOpacity
+                key={course.id}
+                style={styles.recCard}
+                onPress={() => router.push(`/course/${course.id}`)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.recTop}>
+                  <View style={[styles.recLogo, { backgroundColor: sv.logo ? '#fff' : sv.bg }]}>
+                    {sv.logo ? (
+                      <Image source={sv.logo} style={styles.recLogoImg} resizeMode="contain" />
+                    ) : (
+                      <Text style={{ fontSize: sv.icon.length <= 2 ? 16 : 18, color: sv.ink, fontWeight: '900' }}>{sv.icon}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.recName} numberOfLines={1}>{course.title || ''}</Text>
+                </View>
+                <Text style={styles.recSub} numberOfLines={3}>
+                  {course.subtitle || `Learn ${course.title} from basics to advanced concepts`}
+                </Text>
+                <View style={styles.recBottom}>
+                  <View style={[styles.priceBadge, { backgroundColor: course.isFree ? L.greenSoft : L.purpleSoft }]}>
+                    <Text style={[styles.priceText, { color: course.isFree ? L.green : L.purple }]}>
+                      {course.isFree ? 'Free' : 'Pro'}
+                    </Text>
+                  </View>
+                  <Text style={styles.recChevron}>›</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
         {/* Quick Actions */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
         <View style={styles.quickActions}>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push('/leaderboard')}>
+          <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.greenCard }]} onPress={() => router.push('/leaderboard')} activeOpacity={0.85}>
             <Text style={styles.quickActionEmoji}>🏆</Text>
             <Text style={styles.quickActionLabel} numberOfLines={1}>Leaderboard</Text>
+            <Text style={styles.quickActionChevron}>›</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push('/downloads')}>
+          <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.blueSoft }]} onPress={() => router.push('/downloads')} activeOpacity={0.85}>
             <Text style={styles.quickActionEmoji}>📥</Text>
             <Text style={styles.quickActionLabel} numberOfLines={1}>Downloads</Text>
+            <Text style={styles.quickActionChevron}>›</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickActionBtn} onPress={() => router.push('/watchlist')}>
-            <Text style={styles.quickActionEmoji}>📌</Text>
-            <Text style={styles.quickActionLabel}>Watchlist</Text>
+          <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.pinkSoft }]} onPress={() => router.push('/watchlist')} activeOpacity={0.85}>
+            <Text style={styles.quickActionEmoji}>📺</Text>
+            <Text style={styles.quickActionLabel} numberOfLines={1}>Watchlist</Text>
+            <Text style={styles.quickActionChevron}>›</Text>
           </TouchableOpacity>
         </View>
 
@@ -216,142 +441,229 @@ export default function DashboardScreen() {
   );
 }
 
+// ── Light-theme palette (UI only — no logic depends on these) ──
+const L = {
+  bg: '#FFFFFF',
+  ink: '#1E2233',
+  sub: '#8A90A2',
+  blue: '#2F6BFF',
+  blueSoft: '#E6EEFF',
+  amber: '#F5A623',
+  amberSoft: '#FFF3DC',
+  green: '#22C55E',
+  greenCard: '#E9F9EF',
+  greenSoft: '#E4F8EC',
+  pink: '#F0316E',
+  pinkSoft: '#FCE4EE',
+  purple: '#7A3BFF',
+  purpleSoft: '#EEE9FF',
+  line: '#EEF0F5',
+  card: '#FFFFFF',
+};
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg },
+  container: { flex: 1, backgroundColor: L.bg },
 
-  // Welcome Banner
-  welcomeWrapper: {
-    margin: 16,
-    position: 'relative',
+  // Topbar
+  topbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
-  welcomeBanner: {
-    borderRadius: 20, padding: 24, minHeight: 160,
-    backgroundColor: '#2e1065',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
-    overflow: 'hidden', position: 'relative',
-  },
-  studentImage: {
-    position: 'absolute', right: -10, bottom: 0,
-    width: 120, height: 140, zIndex: 1, opacity: 0.9,
-  },
-  welcomeGlow: {
-    position: 'absolute', top: '50%', left: '50%',
-    width: 300, height: 300,
-    backgroundColor: 'rgba(139,92,246,0.25)',
-    borderRadius: 150, transform: [{ translateX: -150 }, { translateY: -150 }],
-  },
-  welcomeLeft: { maxWidth: '75%', zIndex: 2 },
-  welcomeText: { fontSize: 14, color: 'rgba(255,255,255,0.9)', marginBottom: 4 },
-  welcomeName: { fontSize: 22, fontWeight: '800', color: '#fff' },
-  welcomeSubtitle: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 8, marginBottom: 16, lineHeight: 20 },
-  continueBtn: {
-    backgroundColor: '#fff', borderRadius: 50, paddingVertical: 10, paddingHorizontal: 20,
-    alignSelf: 'flex-start',
-  },
-  continueBtnText: { color: '#1a1a2e', fontSize: 13, fontWeight: '700' },
-  coinsBadge: {
-    position: 'absolute', bottom: 12, right: 0,
+  topbarTitle: { fontSize: 21, fontWeight: '900', color: L.ink },
+  // "Kida" multi-colour — exact CodingKida logo shades
+  logoK: { color: '#FA0514' }, // Bright Red
+  logoI: { color: '#FCCE02' }, // Golden Yellow
+  logoD: { color: '#9BE900' }, // Lime Green
+  logoA: { color: '#42C900' }, // Green
+  topbarTagline: { fontSize: 10.5, fontWeight: '600', color: L.sub, marginTop: 1, letterSpacing: 0.3 },
+  topbarActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconBtn: { position: 'relative', width: 34, height: 34, borderRadius: 12, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center' },
+  iconText: { fontSize: 17 },
+  topbarCoins: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: 'rgba(245,158,11,0.15)',
-    borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)',
-    borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4,
-    zIndex: 10,
+    backgroundColor: L.amberSoft,
+    borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5,
   },
-  coinsEmoji: { fontSize: 12 },
-  coinsText: { fontSize: 12, fontWeight: '700', color: '#fbbf24' },
+  topbarCoinsEmoji: { fontSize: 13 },
+  topbarCoinsText: { fontSize: 13, fontWeight: '900', color: '#8A6D00' },
+  bellBadge: {
+    position: 'absolute', top: -2, right: -2,
+    minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: '#ef4444',
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff',
+  },
+  bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
 
-  // Stats Grid
+  // Welcome Card (banner artwork background + overlaid dynamic UI)
+  welcomeWrapper: {
+    marginHorizontal: 16, marginTop: 6, marginBottom: 8,
+    borderRadius: 22, overflow: 'hidden',
+    shadowColor: L.blue, shadowOpacity: 0.12, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 4,
+  },
+  welcomeBanner: { width: '100%', aspectRatio: 2.3, justifyContent: 'flex-start', paddingLeft: 16, paddingRight: 8, paddingTop: 12, overflow: 'hidden', backgroundColor: '#E4EFFB' },
+  welcomeBannerImg: { borderRadius: 22, width: '108%', height: '108%', resizeMode: 'cover', transform: [{ translateX: 2 }] },
+  welcomeLeft: { width: '56%', zIndex: 2 },
+  levelBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5,
+    marginBottom: 8,
+    shadowColor: L.blue, shadowOpacity: 0.1, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  levelStar: { fontSize: 11 },
+  levelText: { fontSize: 11.5, fontWeight: '800', color: L.blue },
+  welcomeText: { fontSize: 14, fontWeight: '600', color: '#44506B' },
+  welcomeName: { fontSize: 19, fontWeight: '900', color: L.ink, marginTop: 1, lineHeight: 23 },
+  welcomeSubtitle: { fontSize: 11.5, fontWeight: '500', color: '#5C6680', lineHeight: 15 },
+  continueBtn: {
+    position: 'absolute', left: 16, bottom: 12, zIndex: 3,
+    alignSelf: 'flex-start',
+    backgroundColor: L.blue, borderRadius: 16, paddingVertical: 5, paddingHorizontal: 8,
+    shadowColor: L.blue, shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4,
+  },
+  continueBtnText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
+
+  // Stats Row — 2 thin cards side by side
   statsGrid: {
-    flexDirection: 'row', flexWrap: 'wrap',
-    paddingHorizontal: 16, gap: 12, marginBottom: 20,
+    flexDirection: 'row',
+    paddingHorizontal: 16, gap: 12, marginTop: 8, marginBottom: 20,
   },
   statCard: {
-    width: '47%', backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 24, padding: 20,
-    borderWidth: 1, position: 'relative', overflow: 'hidden',
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#F3F1FB',
+    borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: '#E8E4F6',
   },
-  statGlow: {
-    position: 'absolute', top: -30, left: -30,
-    width: 120, height: 120, borderRadius: 60,
-  },
+  statCardAmber: { backgroundColor: L.amberSoft, borderColor: '#F6E4C0' },
   statIconWrap: {
-    width: 50, height: 50, borderRadius: 16,
+    width: 38, height: 38, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, marginBottom: 12,
   },
-  statEmoji: { fontSize: 24 },
-  statValue: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 4 },
-  statLabel: { fontSize: 12, color: 'rgba(255,255,255,0.6)', fontWeight: '500' },
-  latestBadgeTitle: { fontSize: 13, fontWeight: '700', color: '#fff', marginBottom: 4 },
+  statTextWrap: { flex: 1, minWidth: 0 },
+  statEmoji: { fontSize: 18 },
+  statValue: { fontSize: 20, fontWeight: '900', color: L.ink },
+  statLabel: { fontSize: 10.5, color: L.sub, fontWeight: '600', marginTop: 1 },
+  statChevron: { fontSize: 18, color: L.sub, fontWeight: '300' },
+  latestBadgeTitle: { fontSize: 12.5, fontWeight: '800', color: L.ink },
 
   // Continue Learning Card
   continueCard: {
     marginHorizontal: 16, marginBottom: 20,
-    backgroundColor: Colors.card2,
-    borderRadius: 18, padding: 16,
-    flexDirection: 'row', alignItems: 'center', gap: 16,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: L.card,
+    borderRadius: 18, padding: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    borderWidth: 1, borderColor: L.line,
+    shadowColor: L.blue, shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 2,
   },
   continueThumbnail: {
-    width: 64, height: 64, borderRadius: 14,
-    backgroundColor: '#000', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(245,158,11,0.2)',
+    width: 62, height: 62, borderRadius: 14,
+    backgroundColor: '#241B3D', alignItems: 'center', justifyContent: 'center',
   },
-  continueThumbnailIcon: { fontSize: 24, color: '#F59E0B' },
-  continueCourseTitle: { color: '#c4b5fd', fontSize: 16, fontWeight: '800', marginBottom: 4 },
-  continueMeta: { color: Colors.muted, fontSize: 12, marginBottom: 10 },
+  continueThumbnailIcon: { fontSize: 24, color: '#B98BFF' },
+  continueCourseTitle: { color: L.ink, fontSize: 16, fontWeight: '900', flexShrink: 1 },
+  continueMeta: { color: L.sub, fontSize: 12, fontWeight: '600', marginBottom: 8 },
+
+  // Continue Learning enrichment
+  continueHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: 16, marginBottom: 12,
+  },
+  continueHeaderTitle: { color: L.ink, fontSize: 17, fontWeight: '900' },
+  continueXpChip: {
+    backgroundColor: L.amberSoft,
+    borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5,
+  },
+  continueXpChipText: { color: '#9A6B00', fontSize: 11, fontWeight: '800' },
+  continueTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  continueLangChip: {
+    backgroundColor: L.purpleSoft,
+    borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+  },
+  continueLangChipText: { color: L.purple, fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  continueDiffBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: L.greenSoft, borderWidth: 1,
+    borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 6,
+  },
+  continueDiffText: { fontSize: 10.5, fontWeight: '800' },
+  continueProgressText: { color: L.sub, fontSize: 11, fontWeight: '700', marginTop: 6 },
   resumeBtn: {
-    backgroundColor: '#4A1D96', borderRadius: 10,
-    paddingVertical: 8, paddingHorizontal: 14,
+    backgroundColor: L.blue, borderRadius: 12,
+    paddingVertical: 10, paddingHorizontal: 14,
   },
-  resumeBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  resumeBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
 
   // Progress bar
   progressBar: {
-    height: 6, backgroundColor: 'rgba(255,255,255,0.08)',
+    height: 6, backgroundColor: L.line,
     borderRadius: 50, overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: Colors.primary,
+    backgroundColor: L.blue,
     borderRadius: 50,
   },
+
+  // Weekly Challenge card + streak pips
+  wcCard: {
+    marginHorizontal: 16, marginBottom: 20,
+    backgroundColor: L.greenCard, borderRadius: 18, padding: 18,
+    borderWidth: 1, borderColor: '#CFEBD8', overflow: 'hidden',
+  },
+  wcArt: { position: 'absolute', right: 10, top: 44, width: 104, height: 104, zIndex: 1 },
+  wcHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  wcTitle: { color: L.ink, fontSize: 16, fontWeight: '900' },
+  wcProgressText: { color: L.green, fontSize: 15, fontWeight: '900' },
+  wcProgressBarWrap: { maxWidth: '66%' },
+  wcProgressBar: { height: 8, backgroundColor: '#D3EEDC', borderRadius: 50, overflow: 'hidden', marginBottom: 10 },
+  wcProgressFill: { height: '100%', backgroundColor: L.green, borderRadius: 50 },
+  wcDescription: { color: '#5A6B60', fontSize: 12.5, fontWeight: '500', lineHeight: 18, marginBottom: 4, maxWidth: '66%' },
+  wcReward: { color: '#C2830B', fontSize: 12.5, fontWeight: '800', marginBottom: 12 },
+  streakPipsRow: { flexDirection: 'row', gap: 6, marginBottom: 10, maxWidth: '64%' },
+  streakPip: {
+    flex: 1, height: 8, borderRadius: 5,
+    backgroundColor: '#CDE9D6',
+  },
+  streakPipFilled: { backgroundColor: L.green },
+  streakPipNext: { backgroundColor: '#8DDBA8' },
+  streakFooter: { color: L.ink, fontSize: 12.5, fontWeight: '800', textAlign: 'center' },
 
   // Section header
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: 16, marginBottom: 12,
   },
-  sectionTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  seeAll: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600' },
+  sectionTitle: { color: L.ink, fontSize: 17, fontWeight: '900' },
+  seeAll: { color: L.blue, fontSize: 13, fontWeight: '700' },
 
-  // Course cards
-  skeletonCard: {
-    marginHorizontal: 16, height: 80,
-    backgroundColor: Colors.card, borderRadius: 12,
+  // Recommended horizontal cards
+  recRow: { paddingHorizontal: 16, gap: 12, paddingBottom: 4 },
+  recCard: {
+    width: 162, backgroundColor: L.card, borderRadius: 16, padding: 12,
+    borderWidth: 1, borderColor: L.line,
   },
-  emptyCard: { alignItems: 'center', padding: 40, marginHorizontal: 16 },
-  emptyText: { color: Colors.muted, fontSize: 14, marginBottom: 12 },
-  exploreLink: { color: Colors.primary, fontSize: 14, fontWeight: '600' },
-  courseCard: {
-    flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: 16, marginBottom: 12,
-    backgroundColor: Colors.card2, borderRadius: 12,
-    padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
-    gap: 12,
-  },
-  courseTitle: { color: '#c4b5fd', fontSize: 15, fontWeight: '800', marginBottom: 2 },
-  courseMeta: { color: Colors.muted, fontSize: 11, marginBottom: 10 },
-  percent: { fontSize: 16, fontWeight: '800', marginLeft: 8 },
-  priceBadge: { borderRadius: 50, paddingHorizontal: 10, paddingVertical: 4 },
-  priceText: { fontSize: 11, fontWeight: '800' },
+  recTop: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  recLogo: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  recLogoImg: { width: 30, height: 30 },
+  recName: { flex: 1, color: L.ink, fontSize: 13, fontWeight: '900' },
+  recSub: { color: L.sub, fontSize: 10.5, fontWeight: '500', lineHeight: 15, minHeight: 60 },
+  recBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  recChevron: { fontSize: 18, color: L.sub, fontWeight: '300' },
+  priceBadge: { borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5 },
+  priceText: { fontSize: 11.5, fontWeight: '800' },
 
   // Quick Actions
-  quickActions: { flexDirection: 'row', paddingHorizontal: 16, gap: 12, marginBottom: 16 },
+  quickActions: { flexDirection: 'row', paddingHorizontal: 16, gap: 10, marginBottom: 16 },
   quickActionBtn: {
-    flex: 1, backgroundColor: Colors.card2, borderRadius: 16, padding: 20,
-    alignItems: 'center', borderWidth: 1, borderColor: Colors.border,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    borderRadius: 14, paddingVertical: 14, paddingHorizontal: 6,
   },
-  quickActionEmoji: { fontSize: 24, marginBottom: 8 },
-  quickActionLabel: { color: '#fff', fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  quickActionEmoji: { fontSize: 16 },
+  quickActionLabel: { color: L.ink, fontSize: 11, fontWeight: '800' },
+  quickActionChevron: { fontSize: 13, color: L.sub, fontWeight: '400' },
 });

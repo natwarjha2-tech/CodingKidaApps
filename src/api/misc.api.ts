@@ -74,3 +74,64 @@ export const mediaApi = {
       .post<{ success: boolean; signedUrl: string }>('/api/media/signed-url', { url })
       .then((r) => r.data),
 };
+
+// Lesson engagement: like/dislike reactions + view counting
+// (mirrors desktop: GET/POST /api/lessons/:id/reaction, POST /api/lessons/:id/view)
+export interface LessonReactionData {
+  success: boolean;
+  likes: number;
+  dislikes: number;
+  views: number;
+  userReaction: 'like' | 'dislike' | null;
+}
+
+export const lessonApi = {
+  getReactions: (lessonId: string) =>
+    apiClient
+      .get<LessonReactionData>(`/api/lessons/${lessonId}/reaction`)
+      .then((r) => r.data),
+
+  react: (lessonId: string, type: 'like' | 'dislike') =>
+    apiClient
+      .post<LessonReactionData>(`/api/lessons/${lessonId}/reaction`, { type })
+      .then((r) => r.data),
+
+  recordView: (lessonId: string) =>
+    apiClient
+      .post<{ success: boolean; views?: number }>(`/api/lessons/${lessonId}/view`, {})
+      .then((r) => r.data),
+};
+
+// Ratings & reviews (per-lesson or app-level via lessonId)
+// Mirrors desktop: POST /api/feedback, GET /api/feedback/lesson?lessonId=<id>
+export interface LessonReview {
+  studentName?: string;
+  rating: number;
+  feedback?: string;
+  createdAt?: string;
+}
+
+export interface LessonReviewsData {
+  success: boolean;
+  avgRating: number;
+  totalReviews: number;
+  ratingCounts: Record<string, number>;
+  reviews: LessonReview[];
+}
+
+export const feedbackApi = {
+  submit: (payload: { rating: number; feedback?: string; lessonId: string; lessonTitle?: string }) =>
+    apiClient
+      .post<{ success: boolean; message?: string }>('/api/feedback', {
+        rating: payload.rating,
+        feedback: payload.feedback ?? '',
+        lessonId: payload.lessonId,
+        lessonTitle: payload.lessonTitle ?? '',
+      })
+      .then((r) => r.data),
+
+  getLessonReviews: (lessonId: string) =>
+    apiClient
+      .get<LessonReviewsData>(`/api/feedback/lesson?lessonId=${lessonId}`)
+      .then((r) => r.data),
+};

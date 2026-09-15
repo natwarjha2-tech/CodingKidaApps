@@ -43,47 +43,52 @@ export default function CompletedVideosScreen() {
         ) : (
           <>
             <Text style={styles.sectionTitle}>Course Breakdown</Text>
-            {enrolled.map((course) => (
-              <TouchableOpacity
-                key={course.id}
-                style={styles.courseCard}
-                onPress={() => router.push(`/course/${course.id}`)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.courseHeader}>
-                  <View style={styles.courseIconWrap}>
-                    <View style={styles.courseIconGlow} />
-                    <Text style={styles.courseIcon}>📖</Text>
+            {enrolled.map((course) => {
+              const pct = course.progressPercent ?? 0;
+              const isComplete = pct >= 100;
+              const ringColor = isComplete ? Colors.success : Colors.purple;
+              const statusLabel = isComplete ? '✅ Completed' : '🟢 In Progress';
+              const motivational =
+                isComplete ? '🏆 Course mastered!' :
+                pct >= 75 ? "🔥 You're almost there!" :
+                pct >= 40 ? '🎉 Great progress!' :
+                '🚀 Good start, keep going!';
+              return (
+                <TouchableOpacity
+                  key={course.id}
+                  style={styles.courseCard}
+                  onPress={() => router.push(`/course/${course.id}`)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.courseHeader}>
+                    {/* Completion ring (percentage circle) */}
+                    <View style={[styles.ring, { borderColor: ringColor }]}>
+                      <Text style={[styles.ringPct, { color: ringColor }]}>{pct}%</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={styles.courseTitleRow}>
+                        <Text style={styles.courseTitle} numberOfLines={1}>{course.title}</Text>
+                        <Text style={[styles.statusLabel, { color: isComplete ? Colors.success : '#6ee7b7' }]}>{statusLabel}</Text>
+                      </View>
+                      <Text style={styles.courseMeta}>{course.completedLessons} of {course.totalLessons} lessons completed</Text>
+                    </View>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.courseTitle}>{course.title}</Text>
-                    <Text style={styles.courseMeta}>
-                      {course.completedLessons} of {course.totalLessons} lessons
-                    </Text>
+                  <View style={styles.progressBar}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${pct}%` as any, backgroundColor: isComplete ? Colors.success : Colors.primary },
+                      ]}
+                    />
                   </View>
-                  <Text
-                    style={[
-                      styles.percent,
-                      { color: course.progressPercent === 100 ? Colors.success : Colors.purple },
-                    ]}
-                  >
-                    {course.progressPercent}%
-                  </Text>
-                </View>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${course.progressPercent}%` as any,
-                        backgroundColor:
-                          course.progressPercent === 100 ? Colors.success : Colors.primary,
-                      },
-                    ]}
-                  />
-                </View>
-              </TouchableOpacity>
-            ))}
+                  {/* Motivational message + Watch Again */}
+                  <View style={styles.courseFooterRow}>
+                    <Text style={styles.motivational}>{motivational}</Text>
+                    <Text style={styles.watchAgain}>Watch Again ▶</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </>
         )}
 
@@ -156,9 +161,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(108,71,255,0.4)',
   },
   courseIcon: { fontSize: 22, zIndex: 1 },
-  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 2 },
+  courseTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
+  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },
   courseMeta: { color: Colors.muted, fontSize: 12 },
   percent: { fontSize: 16, fontWeight: '800' },
+  // Completion ring (percentage circle — no SVG dependency)
+  ring: {
+    width: 52, height: 52, borderRadius: 26,
+    borderWidth: 3, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  ringPct: { fontSize: 13, fontWeight: '800' },
+  statusLabel: { fontSize: 10, fontWeight: '700' },
+  courseFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  motivational: { color: '#6ee7b7', fontSize: 11, fontWeight: '500', flexShrink: 1 },
+  watchAgain: { color: Colors.success, fontSize: 12, fontWeight: '700' },
   progressBar: {
     height: 6,
     backgroundColor: 'rgba(255,255,255,0.08)',

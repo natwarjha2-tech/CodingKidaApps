@@ -1,10 +1,25 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/api';
+import { useAuthStore } from '@/store';
 import { Colors } from '@/theme';
+
+const FEEDBACK_MAX = 500;
+
+// Rating identity (label + emoji + color) — mirrors desktop _RATING_META
+const RATING_META: Record<number, { label: string; emoji: string; color: string }> = {
+  1: { label: 'Very Poor', emoji: '😞', color: '#ef4444' },
+  2: { label: 'Needs Improvement', emoji: '😕', color: '#f97316' },
+  3: { label: 'Average', emoji: '🙂', color: '#f59e0b' },
+  4: { label: 'Good', emoji: '😊', color: '#a78bfa' },
+  5: { label: 'Excellent', emoji: '🤩', color: '#22c55e' },
+};
+function rateColor(r: number): string {
+  return RATING_META[r]?.color || '#94a3b8';
+}
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '';
@@ -14,10 +29,12 @@ function formatDate(dateStr?: string): string {
 
 export default function RateUsScreen() {
   const queryClient = useQueryClient();
+  const user = useAuthStore((s) => s.user);
   const [selectedRating, setSelectedRating] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ text: string; success: boolean } | null>(null);
+  const [isUpdate, setIsUpdate] = useState(false); // existing review → "Update" mode
 
   // Fetch existing app reviews
   const { data: reviewsData, isLoading } = useQuery({
@@ -43,8 +60,7 @@ export default function RateUsScreen() {
       });
       if (res.data?.success) {
         setMessage({ text: '🎉 Thank you for your feedback!', success: true });
-        setFeedback('');
-        setSelectedRating(0);
+        setIsUpdate(true); // review now exists → future submits are updates
         queryClient.invalidateQueries({ queryKey: ['app-ratings'] });
       } else {
         setMessage({ text: `❌ ${res.data?.message || 'Failed'}`, success: false });
@@ -60,6 +76,31 @@ export default function RateUsScreen() {
   const totalReviews = reviewsData?.totalReviews ?? 0;
   const ratingCounts = reviewsData?.ratingCounts ?? {};
   const reviews = reviewsData?.reviews ?? [];
+
+  // Current user's derived review name (email local-part) — matches how the
+  // reviews API derives studentName (mirrors desktop _rateCurrentUserName).
+  const myReviewName = useMemo(() => {
+    const email = user?.email || '';
+    return email.includes('@') ? email.split('@')[0].toLowerCase() : '';
+  }, [user?.email]);
+
+  // Detect the current user's existing review → pre-fill + switch to Update mode.
+  // Only pre-fills when the form is untouched (selectedRating === 0) so we never
+  // overwrite what the user is currently typing.
+  useEffect(() => {
+    if (!myReviewName || reviews.length === 0) return;
+    const mine = [...reviews]
+      .filter((r: any) => (r.studentName || '').toLowerCase() === myReviewName)
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    if (mine) {
+      setIsUpdate(true);
+      setSelectedRating((prev) => (prev === 0 ? (mine.rating || 0) : prev));
+      setFeedback((prev) => (prev === '' ? (mine.feedback || '') : prev));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myReviewName, reviews]);
+
+  const currentMeta = selectedRating > 0 ? RATING_META[selectedRating] : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -79,26 +120,40 @@ export default function RateUsScreen() {
           <View style={styles.starsRow}>
             {[1, 2, 3, 4, 5].map((star) => (
               <TouchableOpacity key={star} onPress={() => setSelectedRating(star)}>
-                <Text style={[styles.star, star <= selectedRating && styles.starActive]}>
+                <Text style={[styles.star, star <= selectedRating && { color: rateColor(selectedRating) }]}>
                   {star <= selectedRating ? '★' : '☆'}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Mood label — reflects selected rating (mirrors desktop) */}
+          {currentMeta && (
+            <View style={[styles.moodLabel, { backgroundColor: `${currentMeta.color}1f`, borderColor: `${currentMeta.color}66` }]}>
+              <Text style={[styles.moodLabelText, { color: currentMeta.color }]}>
+                {currentMeta.label} {currentMeta.emoji}
+              </Text>
+            </View>
+          )}
+
           <TextInput
             style={styles.feedbackInput}
             placeholder="Share your experience (optional)"
             placeholderTextColor={Colors.muted}
             value={feedback}
-            onChangeText={setFeedback}
+            onChangeText={(t) => setFeedback(t.slice(0, FEEDBACK_MAX))}
             multiline
             numberOfLines={3}
+            maxLength={FEEDBACK_MAX}
           />
+          {/* Char count */}
+          <Text style={styles.charCount}>{feedback.length} / {FEEDBACK_MAX}</Text>
+
           <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit} disabled={submitting}>
             {submitting ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.submitBtnText}>Submit Rating</Text>
+              <Text style={styles.submitBtnText}>{isUpdate ? 'Update Rating' : 'Submit Rating'}</Text>
             )}
           </TouchableOpacity>
           {message && (
@@ -184,15 +239,20 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border,
   },
   rateTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 16 },
-  starsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  starsRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   star: { fontSize: 36, color: 'rgba(255,255,255,0.3)' },
-  starActive: { color: '#fbbf24' },
+  moodLabel: {
+    alignSelf: 'center', borderWidth: 1, borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 5, marginBottom: 14,
+  },
+  moodLabelText: { fontSize: 13, fontWeight: '700' },
   feedbackInput: {
     width: '100%', backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14,
-    textAlignVertical: 'top', marginBottom: 16, minHeight: 80,
+    textAlignVertical: 'top', marginBottom: 6, minHeight: 80,
   },
+  charCount: { alignSelf: 'flex-end', color: Colors.muted, fontSize: 11, marginBottom: 14 },
   submitBtn: {
     backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 14,
     paddingHorizontal: 32, alignItems: 'center',

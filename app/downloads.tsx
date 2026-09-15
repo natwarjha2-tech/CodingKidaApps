@@ -22,6 +22,7 @@ export default function DownloadsScreen() {
       setOrganized(data);
       const all = await DownloadService.getAll();
       setTotalItems(all.length);
+      DownloadService.notifyExpiringSoon(); // fire & forget — warn about soon-to-expire downloads
     } catch {
       setOrganized({});
     } finally {
@@ -116,6 +117,9 @@ export default function DownloadsScreen() {
                                 <Text style={styles.itemTitle} numberOfLines={1}>{item.lessonTitle}</Text>
                                 <View style={styles.itemMeta}>
                                   <Text style={styles.itemType}>{item.type === 'video' ? 'Video' : 'PDF'}</Text>
+                                  {item.type === 'video' && item.quality ? (
+                                    <Text style={styles.itemQuality}>{item.quality}</Text>
+                                  ) : null}
                                   {item.fileSize ? <Text style={styles.itemSize}>{formatSize(item.fileSize)}</Text> : null}
                                   <Text style={[styles.itemExpiry, daysLeft < 7 && { color: Colors.danger }]}>
                                     {daysLeft}d left
@@ -207,6 +211,10 @@ const styles = StyleSheet.create({
   itemTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 4 },
   itemMeta: { flexDirection: 'row', gap: 8 },
   itemType: { color: Colors.muted, fontSize: 11 },
+  itemQuality: {
+    color: Colors.purple, fontSize: 10, fontWeight: '700',
+    backgroundColor: 'rgba(108,71,255,0.12)', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 1, overflow: 'hidden',
+  },
   itemSize: { color: Colors.muted, fontSize: 11 },
   itemExpiry: { color: Colors.success, fontSize: 11, fontWeight: '600' },
   itemActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },

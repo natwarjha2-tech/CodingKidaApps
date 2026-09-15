@@ -1,10 +1,62 @@
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
+import { useCourses, useSupportContact } from '@/hooks';
+import { apiClient } from '@/api';
 import { Colors } from '@/theme';
+
+// Parse a course "students" value (number or "1.2k") into a plain number (mirrors desktop)
+function parseStudents(v: unknown): number {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s.endsWith('k')) return Math.round(parseFloat(s) * 1000) || 0;
+    return parseInt(s.replace(/[^0-9]/g, ''), 10) || 0;
+  }
+  return 0;
+}
+
+// Format a large count for display (e.g. 12345 → "12.3K+") — mirrors desktop _aboutFmtCount
+function formatCount(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K+';
+  return String(n) + '+';
+}
 
 export default function AboutUsScreen() {
   const appVersion = '1.0.0';
+  const support = useSupportContact(); // live support email (backend-configurable)
+
+  const contactSupport = () => {
+    const subject = 'Help Request';
+    const body = 'Hi CodingKida Support,\n\nI need help with:\n\n[Describe your issue here]\n\nThank you';
+    Linking.openURL(`mailto:${support.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`).catch(() => {});
+  };
+
+  // Dynamic stats (never fabricated — fall back to "—")
+  const { data: coursesData } = useCourses('All', '');
+  const courses = coursesData?.courses ?? [];
+
+  const { data: ratingData } = useQuery({
+    queryKey: ['app-ratings'],
+    queryFn: () =>
+      apiClient
+        .get<{ success: boolean; avgRating: number; totalReviews: number }>(
+          '/api/feedback/lesson?lessonId=app_rating'
+        )
+        .then((r) => r.data),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const coursesStat = courses.length > 0 ? `${courses.length}+` : '—';
+  const totalStudents = courses.reduce((sum, c: any) => sum + parseStudents(c.students), 0);
+  const studentsStat = courses.length > 0 ? formatCount(totalStudents) : '—';
+  const avgRating = ratingData?.avgRating ?? 0;
+  const totalReviews = ratingData?.totalReviews ?? 0;
+  const ratingStat = avgRating > 0 ? Number(avgRating).toFixed(1) : '—';
+  const ratingSub = avgRating > 0
+    ? `Based on ${totalReviews} review${totalReviews === 1 ? '' : 's'}`
+    : 'No ratings yet';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -24,6 +76,28 @@ export default function AboutUsScreen() {
           <Text style={styles.appName}>CodingKida</Text>
           <Text style={styles.appTagline}>Learn to Code, Build the Future</Text>
           <Text style={styles.appVersion}>Version {appVersion}</Text>
+        </View>
+
+        {/* Dynamic Stats (courses / students / rating) — mirrors desktop */}
+        <View style={styles.statsRow}>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{coursesStat}</Text>
+            <Text style={styles.statLabel}>Courses</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{studentsStat}</Text>
+            <Text style={styles.statLabel}>Students</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>{ratingStat}</Text>
+            <Text style={styles.statLabel}>Rating</Text>
+            <Text style={styles.statSub}>{ratingSub}</Text>
+          </View>
+          <View style={styles.statCard}>
+            <Text style={[styles.statValue, styles.statValueSupport]}>🎧 24/7</Text>
+            <Text style={styles.statLabel}>Support</Text>
+            <Text style={styles.statSub}>We're here to help you anytime</Text>
+          </View>
         </View>
 
         {/* About App */}
@@ -58,6 +132,13 @@ export default function AboutUsScreen() {
           <Text style={styles.linkArrow}>›</Text>
         </TouchableOpacity>
 
+        {/* Contact support — live email (backend-configurable), mirrors desktop */}
+        <TouchableOpacity style={styles.linkItem} onPress={contactSupport}>
+          <Text style={styles.linkEmoji}>📧</Text>
+          <Text style={styles.linkText} numberOfLines={1}>Contact: {support.email}</Text>
+          <Text style={styles.linkArrow}>›</Text>
+        </TouchableOpacity>
+
         {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerText}>Made with ❤️ in India</Text>
@@ -89,6 +170,17 @@ const styles = StyleSheet.create({
   appName: { fontSize: 24, fontWeight: '800', color: '#fff', marginBottom: 6 },
   appTagline: { fontSize: 13, color: Colors.muted, marginBottom: 12 },
   appVersion: { fontSize: 12, color: Colors.purple, fontWeight: '600', backgroundColor: Colors.primaryLight, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20, overflow: 'hidden' },
+
+  // Dynamic stats row (2×2 grid — wraps cleanly on all screen sizes)
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 },
+  statCard: {
+    width: '47%', flexGrow: 1, backgroundColor: Colors.card2, borderRadius: 14, padding: 14,
+    alignItems: 'center', borderWidth: 1, borderColor: Colors.border,
+  },
+  statValue: { color: Colors.primary, fontSize: 20, fontWeight: '800', marginBottom: 2 },
+  statValueSupport: { color: '#67e8f9' },
+  statLabel: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  statSub: { color: Colors.muted, fontSize: 9, marginTop: 3, textAlign: 'center' },
   sectionCard: {
     backgroundColor: Colors.card2, borderRadius: 16, padding: 18,
     marginBottom: 20, borderWidth: 1, borderColor: Colors.border,

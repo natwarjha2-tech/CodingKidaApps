@@ -15,6 +15,13 @@ export interface Course {
   isActive: boolean;
   isEnrolled?: boolean;
   isFree?: boolean;
+  // Real counts returned by the /api/courses list route (backend-computed).
+  // lessonCount: total lessons across modules; totalDurationSeconds: summed
+  // from stored per-lesson durations; enrolledStudents: real purchaser count.
+  lessonCount?: number;
+  totalDurationSeconds?: number;
+  enrolledStudents?: number;
+  _count?: { modules?: number };
 }
 
 export interface Lesson {
@@ -31,11 +38,21 @@ export interface Lesson {
   hlsStatus?: string;
 }
 
+export interface ModuleMaterial {
+  id: string;
+  title: string;
+  fileUrl: string;
+  fileType: string; // "pdf" | "ppt" | "doc" | "image"
+  fileSize?: number;
+  order?: number;
+}
+
 export interface Module {
   id: string;
   title: string;
   order: number;
   lessons: Lesson[];
+  materials?: ModuleMaterial[];
 }
 
 export interface CourseDetail extends Course {

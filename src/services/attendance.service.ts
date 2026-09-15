@@ -140,6 +140,20 @@ export const AttendanceService = {
   },
 
   /**
+   * Per-day detail for the calendar day-popup (mirrors desktop _attendanceGetDayDetail):
+   * learning minutes + number of times the app was opened (sessions) that day.
+   */
+  getDayDetail: async (dateKey: string): Promise<{ mins: number; opens: number }> => {
+    const data = await AttendanceService.getData();
+    const day = data[dateKey];
+    if (!day) return { mins: 0, opens: 0 };
+    return {
+      mins: Math.min(day.totalMins ?? 0, MAX_DAILY_MINS),
+      opens: Array.isArray(day.sessions) ? day.sessions.length : 0,
+    };
+  },
+
+  /**
    * Format minutes to readable string
    */
   formatMins: (mins: number): string => {

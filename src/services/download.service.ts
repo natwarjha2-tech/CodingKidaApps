@@ -1,8 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { mediaApi } from '@/api';
 import { StorageService } from './storage.service';
+import { presentLocalNotification } from './notification.service';
 
 const DOWNLOADS_KEY = 'ck_downloads';
+const DOWNLOAD_EXPIRY_NOTIFIED_KEY = 'ck_download_expiry_notified'; // de-dupe set
+const EXPIRY_WARN_DAYS = 3; // notify when <= 3 days left
 
 export interface DownloadItem {
   id: string; // lessonId + type
@@ -17,6 +20,7 @@ export interface DownloadItem {
   downloadedAt: string;
   expiresAt: string; // 30 days from download
   fileSize?: number;
+  quality?: string; // selected video quality (e.g. "720p", "480p", "Original")
 }
 
 async function getSignedUrl(url: string): Promise<string> {
@@ -42,8 +46,9 @@ export const DownloadService = {
     courseTitle: string;
     type: 'video' | 'pdf';
     url: string;
+    quality?: string; // selected video quality (optional; defaults to Original)
   }): Promise<DownloadItem> => {
-    const { lessonId, lessonTitle, moduleTitle, courseId, courseTitle, type, url } = params;
+    const { lessonId, lessonTitle, moduleTitle, courseId, courseTitle, type, url, quality } = params;
 
     // 1. Get signed URL
     const signedUrl = await getSignedUrl(url);
@@ -86,6 +91,7 @@ export const DownloadService = {
       downloadedAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
       fileSize: fileInfo.exists ? (fileInfo as any).size : undefined,
+      quality: type === 'video' ? (quality || 'Original') : undefined,
     };
 
     // 7. Save to storage
@@ -162,6 +168,63 @@ export const DownloadService = {
   getRemainingDays: (expiresAt: string): number => {
     const diff = new Date(expiresAt).getTime() - Date.now();
     return Math.max(0, Math.ceil(diff / (24 * 60 * 60 * 1000)));
+  },
+
+  /**
+   * Notify about downloads expiring soon (<= EXPIRY_WARN_DAYS days).
+   * Client-side local notification only (no server). Idempotent per download
+   * id — each download triggers the warning at most once.
+   */
+  notifyExpiringSoon: async (): Promise<void> => {
+    try {
+      const items = await DownloadService.getAll();
+      if (items.length === 0) return;
+
+      // Load already-notified set
+      const notified =
+        (await StorageService.getObject<string[]>(DOWNLOAD_EXPIRY_NOTIFIED_KEY)) ?? [];
+      const notifiedSet = new Set(notified);
+
+      // Find downloads expiring soon and not yet warned
+      const expiringSoon = items.filter((d) => {
+        const days = DownloadService.getRemainingDays(d.expiresAt);
+        return days > 0 && days <= EXPIRY_WARN_DAYS && !notifiedSet.has(d.id);
+      });
+
+      if (expiringSoon.length === 0) {
+        // Housekeeping: drop notified ids that no longer exist
+        const liveIds = new Set(items.map((d) => d.id));
+        const cleaned = notified.filter((id) => liveIds.has(id));
+        if (cleaned.length !== notified.length) {
+          await StorageService.setObject(DOWNLOAD_EXPIRY_NOTIFIED_KEY, cleaned);
+        }
+        return;
+      }
+
+      // Build a single, clear message
+      const soonest = expiringSoon.reduce((min, d) =>
+        DownloadService.getRemainingDays(d.expiresAt) < DownloadService.getRemainingDays(min.expiresAt) ? d : min
+      );
+      const soonestDays = DownloadService.getRemainingDays(soonest.expiresAt);
+
+      const title = 'Downloads Expiring Soon ⏳';
+      const body =
+        expiringSoon.length === 1
+          ? `Your download "${soonest.lessonTitle}" expires in ${soonestDays} day${soonestDays === 1 ? '' : 's'}. Re-download to keep watching offline.`
+          : `${expiringSoon.length} of your downloads expire soon (earliest in ${soonestDays} day${soonestDays === 1 ? '' : 's'}). Re-download to keep them offline.`;
+
+      await presentLocalNotification({
+        title,
+        body,
+        data: { type: 'download_expiring', count: expiringSoon.length },
+      });
+
+      // Mark these as notified so we don't repeat
+      const updated = Array.from(new Set([...notified, ...expiringSoon.map((d) => d.id)]));
+      await StorageService.setObject(DOWNLOAD_EXPIRY_NOTIFIED_KEY, updated);
+    } catch {
+      // Silent — never crash on notification logic
+    }
   },
 
   /**

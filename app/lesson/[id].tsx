@@ -4,22 +4,24 @@ import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useCourseStore } from '@/store';
+import { useCourseStore, useAuthStore } from '@/store';
 import { useQuiz, useExercise, useHomework, useCoins } from '@/hooks';
-import { quizApi, exerciseApi, progressApi, weeklyStreakApi, aiMentorApi, mediaApi } from '@/api';
-import { StorageService, DownloadService } from '@/services';
+import { quizApi, exerciseApi, progressApi, weeklyStreakApi, aiMentorApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, type LessonReviewsData } from '@/api';
+import { StorageService, DownloadService, XPService, XP_REWARDS } from '@/services';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import { CoinsModal } from '@/components/common/CoinsModal';
+import { CoinRewardToast } from '@/components/common/CoinRewardToast';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
-type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'ai';
+type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'rate' | 'ai';
 
 const WATCHLIST_KEY = 'ck_watchlist';
 
 export default function LessonScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeLesson, activeModule, lessonContext } = useCourseStore();
+  const xpUserId = useAuthStore((s) => s.user?.id);
   const [activeTab, setActiveTab] = useState<Tab>('notes');
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
@@ -30,11 +32,32 @@ export default function LessonScreen() {
   const [exerciseAnswers, setExerciseAnswers] = useState<Record<string, string>>({});
   const [exerciseResults, setExerciseResults] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  // Coin reward toast (after quiz awards coins — mirrors desktop)
+  const [coinToast, setCoinToast] = useState<{ coins: number; badge?: string; rank?: number } | null>(null);
+  // Exercise rank (course-level) — shown after a submission (mirrors desktop)
+  const [exerciseRank, setExerciseRank] = useState<{ rank: number; totalStudents: number; score: number } | null>(null);
+  const [exerciseRankLoading, setExerciseRankLoading] = useState(false);
+  const [exerciseRankLoaded, setExerciseRankLoaded] = useState(false);
 
   const lessonId = activeLesson?.id ?? id;
   const courseId = lessonContext?.courseId ?? '';
   const queryClient = useQueryClient();
   const [lessonCompleted, setLessonCompleted] = useState(false);
+
+  // Video engagement: like/dislike reactions + view count (mirrors desktop)
+  const [likes, setLikes] = useState(0);
+  const [dislikes, setDislikes] = useState(0);
+  const [views, setViews] = useState(0);
+  const [userReaction, setUserReaction] = useState<'like' | 'dislike' | null>(null);
+  const viewRecorded = useRef(false);
+
+  // Per-lesson rating (Rate tab) — mirrors desktop
+  const [lessonRating, setLessonRating] = useState(0);
+  const [rateFeedback, setRateFeedback] = useState('');
+  const [rateSubmitting, setRateSubmitting] = useState(false);
+  const [rateMessage, setRateMessage] = useState<{ text: string; success: boolean } | null>(null);
+  const [reviewsData, setReviewsData] = useState<LessonReviewsData | null>(null);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
 
   // Invalidate dashboard when leaving lesson — so lastWatched card updates instantly
   useEffect(() => {
@@ -42,6 +65,11 @@ export default function LessonScreen() {
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     };
   }, []);
+
+  // Load XP state for the current user (frontend gamification)
+  useEffect(() => {
+    if (xpUserId) XPService.init(xpUserId);
+  }, [xpUserId]);
 
   // Coins
   const { data: coinsData } = useCoins();
@@ -69,6 +97,10 @@ export default function LessonScreen() {
   const [videoDownloaded, setVideoDownloaded] = useState(false);
   const [pdfDownloaded, setPdfDownloaded] = useState(false);
   const [savedToWatchlist, setSavedToWatchlist] = useState(false);
+
+  // Selected video quality (from the player) — download uses exactly this quality.
+  const [selectedQuality, setSelectedQuality] = useState('Original');
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
 
   // Check download status on mount
   useEffect(() => {
@@ -119,6 +151,8 @@ export default function LessonScreen() {
   const handleVideoComplete = useCallback(async () => {
     if (lessonCompleted || !lessonId) return;
     setLessonCompleted(true);
+    // Award XP for completing the lesson (once per lesson — anti-farming key)
+    XPService.awardXP(`lesson-complete:${lessonId}`, XP_REWARDS.lessonComplete);
     try {
       await progressApi.markComplete(lessonId);
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -127,6 +161,104 @@ export default function LessonScreen() {
       // Silently fail - will retry next time
     }
   }, [lessonId, lessonCompleted, queryClient]);
+
+  // Load like/dislike/view counts + user's current reaction (mirrors desktop)
+  useEffect(() => {
+    if (!lessonId) return;
+    viewRecorded.current = false;
+    let cancelled = false;
+    lessonApi.getReactions(lessonId)
+      .then((data) => {
+        if (cancelled || !data?.success) return;
+        setLikes(data.likes || 0);
+        setDislikes(data.dislikes || 0);
+        setViews(data.views || 0);
+        setUserReaction(data.userReaction ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [lessonId]);
+
+  // Toggle like/dislike reaction
+  const handleReact = useCallback(async (type: 'like' | 'dislike') => {
+    if (!lessonId) return;
+    try {
+      const data = await lessonApi.react(lessonId, type);
+      if (data?.success) {
+        setLikes(data.likes || 0);
+        setDislikes(data.dislikes || 0);
+        setUserReaction(data.userReaction ?? null);
+      }
+    } catch {
+      // Silent — reaction failure must not disrupt lesson
+    }
+  }, [lessonId]);
+
+  // Record a view after ~30s watch time (fired once per lesson open)
+  const handleViewCounted = useCallback(() => {
+    if (viewRecorded.current || !lessonId) return;
+    viewRecorded.current = true;
+    setViews((v) => v + 1); // optimistic
+    lessonApi.recordView(lessonId).catch(() => {});
+  }, [lessonId]);
+
+  // Award XP once when the lesson is ~80% watched (mirrors desktop lessonWatch80)
+  const handleVideoProgress = useCallback((percent: number) => {
+    if (percent >= 80 && lessonId) {
+      XPService.awardXP(`lesson-watch:${lessonId}`, XP_REWARDS.lessonWatch80);
+    }
+  }, [lessonId]);
+
+  // Load lesson reviews (called when Rate tab opens)
+  const loadLessonReviews = useCallback(async () => {
+    if (!lessonId) return;
+    setReviewsLoading(true);
+    try {
+      const data = await feedbackApi.getLessonReviews(lessonId);
+      if (data?.success) setReviewsData(data);
+    } catch {
+      // Silent — reviews are non-critical
+    } finally {
+      setReviewsLoading(false);
+    }
+  }, [lessonId]);
+
+  // Load reviews the first time the Rate tab is opened
+  useEffect(() => {
+    if (activeTab === 'rate' && !reviewsData && !reviewsLoading) {
+      loadLessonReviews();
+    }
+  }, [activeTab, reviewsData, reviewsLoading, loadLessonReviews]);
+
+  // Submit lesson rating (mirrors desktop wording/behaviour)
+  const handleSubmitLessonRating = useCallback(async () => {
+    if (lessonRating === 0) {
+      setRateMessage({ text: 'Please select a star rating', success: false });
+      return;
+    }
+    setRateSubmitting(true);
+    setRateMessage(null);
+    try {
+      const data = await feedbackApi.submit({
+        rating: lessonRating,
+        feedback: rateFeedback.trim(),
+        lessonId,
+        lessonTitle: activeLesson?.title ?? '',
+      });
+      if (data?.success) {
+        setRateMessage({ text: '🎉 Thank you! Your rating has been submitted.', success: true });
+        setRateFeedback('');
+        setLessonRating(0);
+        loadLessonReviews(); // refresh reviews list
+      } else {
+        setRateMessage({ text: `❌ ${data?.message || 'Failed'}`, success: false });
+      }
+    } catch (err: any) {
+      setRateMessage({ text: `❌ ${err?.response?.data?.message || 'Network error'}`, success: false });
+    } finally {
+      setRateSubmitting(false);
+    }
+  }, [lessonRating, rateFeedback, lessonId, activeLesson?.title, loadLessonReviews]);
 
   // Save to Watchlist
   const saveToWatchlist = async () => {
@@ -160,7 +292,10 @@ export default function LessonScreen() {
       return;
     }
     try {
-      Alert.alert('Downloading...', 'Video download started.');
+      // Download the quality the user currently selected in the player (mirrors
+      // desktop). Falls back to the Original URL if no quality was switched.
+      const dlUrl = selectedVideoUrl || activeLesson.videoUrl;
+      Alert.alert('Downloading...', `Video download started${selectedQuality !== 'Original' ? ` (${selectedQuality})` : ''}.`);
       await DownloadService.download({
         lessonId,
         lessonTitle: activeLesson?.title ?? 'Lesson',
@@ -168,10 +303,11 @@ export default function LessonScreen() {
         courseId: lessonContext?.courseId ?? '',
         courseTitle: lessonContext?.courseTitle ?? '',
         type: 'video',
-        url: activeLesson.videoUrl,
+        url: dlUrl,
+        quality: selectedQuality,
       });
       setVideoDownloaded(true);
-      Alert.alert('Success! ✅', 'Video downloaded for offline viewing (30 days).');
+      Alert.alert('Success! ✅', `Video downloaded for offline viewing (${selectedQuality}, 30 days).`);
     } catch (err: any) {
       Alert.alert('Download Failed', err?.message || 'Please check your internet and try again.');
     }
@@ -234,9 +370,16 @@ export default function LessonScreen() {
       total: prev.total + 1,
     }));
 
+    // Award XP per correct answer (unique key per quiz question)
+    if (isCorrect) {
+      XPService.awardXP(`quiz-correct:${currentQuiz.id}`, XP_REWARDS.quizCorrect);
+    }
+
     // Check if this is last question
     if (currentQuizIndex === quizzes.length - 1) {
       setQuizCompleted(true);
+      // Award XP for completing the quiz (once per lesson quiz)
+      XPService.awardXP(`quiz-complete:${lessonId}`, XP_REWARDS.quizComplete);
       // Mark lesson quiz as attempted (prevents future coin rewards)
       if (!quizAttemptedBefore) {
         const attempted = await StorageService.getObject<string[]>('ck_quiz_attempted_lessons') ?? [];
@@ -256,13 +399,34 @@ export default function LessonScreen() {
           courseId,
           lessonId,
         });
-        // Instantly refresh coins if awarded (Improvement #2)
+        // Instantly refresh coins if awarded + show reward toast (mirrors desktop)
         if (res.coinsAwarded && res.coinsAwarded > 0) {
           queryClient.invalidateQueries({ queryKey: ['coins'] });
+          setCoinToast({ coins: res.coinsAwarded, badge: res.badge, rank: res.rank });
         }
       } catch {}
     }
   };
+
+  // Fetch course-level exercise rank (mirrors desktop fetchAndShowExerciseRank)
+  const fetchExerciseRank = useCallback(async () => {
+    if (!courseId) return;
+    setExerciseRankLoading(true);
+    setExerciseRankLoaded(true);
+    try {
+      const data = await leaderboardApi.get(courseId);
+      if (data?.success && data.currentUserRank) {
+        const r = data.currentUserRank;
+        setExerciseRank({ rank: r.rank, totalStudents: r.totalStudents, score: r.score });
+      } else {
+        setExerciseRank(null);
+      }
+    } catch {
+      // Silent — rank is non-critical
+    } finally {
+      setExerciseRankLoading(false);
+    }
+  }, [courseId]);
 
   const handleExerciseSubmit = async (exercise: any) => {
     const answer = exerciseAnswers[exercise.id] || '';
@@ -280,6 +444,8 @@ export default function LessonScreen() {
       });
       if (res.passed) {
         setExerciseResults(prev => ({ ...prev, [exercise.id]: '✅ Correct Answer! Well done!' }));
+        // Award XP for passing the exercise (once per exercise)
+        XPService.awardXP(`exercise-complete:${exercise.id}`, XP_REWARDS.exerciseComplete);
       } else {
         setExerciseResults(prev => ({ ...prev, [exercise.id]: `❌ Incorrect Answer: ${res.message || 'Try Again'}` }));
       }
@@ -287,6 +453,7 @@ export default function LessonScreen() {
       setExerciseResults(prev => ({ ...prev, [exercise.id]: '✅ Answer submitted for evaluation.' }));
     } finally {
       setSubmitting(false);
+      fetchExerciseRank(); // show/refresh exercise rank after submission
     }
   };
 
@@ -309,6 +476,7 @@ export default function LessonScreen() {
     { key: 'exercise', label: '💻 Exercise' },
     { key: 'homework', label: '📝 Homework' },
     ...(streak ? [{ key: 'streak' as Tab, label: '🔥 Streak' }] : []),
+    { key: 'rate', label: '⭐ Rate' },
     { key: 'ai', label: '🤖 AI' },
   ];
 
@@ -330,10 +498,39 @@ export default function LessonScreen() {
           videoUrl={activeLesson?.videoUrl ?? ''}
           title={activeLesson?.title}
           qualityUrls={activeLesson?.qualityUrls}
+          onQualityChange={(q, url) => { setSelectedQuality(q); setSelectedVideoUrl(url); }}
           hlsQualities={activeLesson?.hlsQualities}
           onComplete={handleVideoComplete}
+          onViewCounted={handleViewCounted}
+          onProgress={handleVideoProgress}
         />
       )}
+
+      {/* Engagement bar: like / dislike / views (mirrors desktop) */}
+      {!keyboardVisible && activeLesson?.videoUrl ? (
+        <View style={styles.engagementBar}>
+          <TouchableOpacity
+            style={[styles.engBtn, userReaction === 'like' && styles.engBtnLike]}
+            onPress={() => handleReact('like')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.engIcon, userReaction === 'like' && { color: Colors.success }]}>👍</Text>
+            <Text style={[styles.engCount, userReaction === 'like' && { color: Colors.success }]}>{likes}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.engBtn, userReaction === 'dislike' && styles.engBtnDislike]}
+            onPress={() => handleReact('dislike')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.engIcon, userReaction === 'dislike' && { color: Colors.danger }]}>👎</Text>
+            <Text style={[styles.engCount, userReaction === 'dislike' && { color: Colors.danger }]}>{dislikes}</Text>
+          </TouchableOpacity>
+          <View style={styles.engViews}>
+            <Text style={styles.engIcon}>👁️</Text>
+            <Text style={styles.engCount}>{views} views</Text>
+          </View>
+        </View>
+      ) : null}
 
       {/* Action Toolbar — hidden when keyboard open */}
       {!keyboardVisible && (
@@ -531,6 +728,26 @@ export default function LessonScreen() {
             )) : (
               <Text style={styles.emptyText}>Exercise coming soon for this lesson.</Text>
             )}
+
+            {/* Exercise Rank — shown after a submission (mirrors desktop) */}
+            {exerciseRankLoaded && (
+              <View style={styles.exRankBox}>
+                {exerciseRankLoading ? (
+                  <Text style={styles.exRankLoading}>Loading rank...</Text>
+                ) : exerciseRank ? (
+                  <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.exRankBolt}>⚡</Text>
+                    <Text style={styles.exRankLabel}>Your Exercise Rank</Text>
+                    <Text style={styles.exRankValue}>#{exerciseRank.rank}</Text>
+                    <Text style={styles.exRankMeta}>
+                      out of {exerciseRank.totalStudents} students · Score: {exerciseRank.score}%
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.exRankEmpty}>Complete more exercises to see your rank!</Text>
+                )}
+              </View>
+            )}
           </View>
         )}
 
@@ -620,6 +837,97 @@ export default function LessonScreen() {
           </View>
         )}
 
+        {/* Rate Tab — per-lesson rating + reviews (mirrors desktop) */}
+        {activeTab === 'rate' && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>⭐ Rate this Lesson</Text>
+
+            {/* Star input */}
+            <View style={styles.rateStarsRow}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity key={star} onPress={() => setLessonRating(star)}>
+                  <Text style={[styles.rateStar, star <= lessonRating && styles.rateStarActive]}>
+                    {star <= lessonRating ? '★' : '☆'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TextInput
+              style={styles.rateFeedbackInput}
+              placeholder="Share your feedback (optional)"
+              placeholderTextColor={Colors.muted}
+              value={rateFeedback}
+              onChangeText={setRateFeedback}
+              multiline
+              autoCapitalize="sentences"
+            />
+
+            <TouchableOpacity
+              style={[styles.submitBtn, rateSubmitting && styles.submitBtnDisabled]}
+              onPress={handleSubmitLessonRating}
+              disabled={rateSubmitting}
+            >
+              <Text style={styles.submitBtnText}>{rateSubmitting ? 'Submitting...' : 'Submit'}</Text>
+            </TouchableOpacity>
+
+            {rateMessage && (
+              <Text style={[styles.rateMessage, { color: rateMessage.success ? Colors.success : Colors.danger }]}>
+                {rateMessage.text}
+              </Text>
+            )}
+
+            {/* Reviews summary + list */}
+            {reviewsLoading ? (
+              <Text style={[styles.emptyText, { paddingVertical: 16 }]}>Loading reviews...</Text>
+            ) : reviewsData && reviewsData.totalReviews > 0 ? (
+              <View style={styles.rateReviewsSection}>
+                <View style={styles.rateSummaryRow}>
+                  <View style={styles.rateAvgBox}>
+                    <Text style={styles.rateAvgValue}>{reviewsData.avgRating}</Text>
+                    <Text style={styles.rateAvgLabel}>
+                      {reviewsData.totalReviews} review{reviewsData.totalReviews > 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    {[5, 4, 3, 2, 1].map((s) => {
+                      const count = reviewsData.ratingCounts[s] || 0;
+                      const pct = reviewsData.totalReviews > 0 ? Math.round((count / reviewsData.totalReviews) * 100) : 0;
+                      return (
+                        <View key={s} style={styles.rateBarRow}>
+                          <Text style={styles.rateBarLabel}>{s}★</Text>
+                          <View style={styles.rateBarBg}>
+                            <View style={[styles.rateBarFill, { width: `${pct}%` }]} />
+                          </View>
+                          <Text style={styles.rateBarCount}>{count}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <Text style={styles.rateReviewsTitle}>Student Reviews</Text>
+                {reviewsData.reviews.slice(0, 10).map((r, idx) => (
+                  <View key={idx} style={styles.rateReviewItem}>
+                    <View style={styles.rateReviewHeader}>
+                      <Text style={styles.rateReviewName}>{r.studentName || 'Student'}</Text>
+                      <Text style={styles.rateReviewDate}>
+                        {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.rateReviewStars}>
+                      {Array.from({ length: 5 }, (_, i) => (i < r.rating ? '★' : '☆')).join('')}
+                    </Text>
+                    {r.feedback ? <Text style={styles.rateReviewText}>{r.feedback}</Text> : null}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={[styles.emptyText, { paddingVertical: 16 }]}>No reviews yet. Be the first to rate!</Text>
+            )}
+          </View>
+        )}
+
         {/* AI Mentor Tab */}
         {activeTab === 'ai' && (
           <View style={styles.card}>
@@ -652,6 +960,15 @@ export default function LessonScreen() {
         <View style={{ height: activeTab === 'ai' ? 300 : Spacing.xxxl }} />
       </ScrollView>
 
+      {/* Coin reward toast (after quiz coins awarded) */}
+      <CoinRewardToast
+        visible={coinToast !== null}
+        coins={coinToast?.coins ?? 0}
+        badge={coinToast?.badge}
+        rank={coinToast?.rank}
+        onHide={() => setCoinToast(null)}
+      />
+
       {/* Coins Modal */}
       <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
 
@@ -682,6 +999,64 @@ const styles = StyleSheet.create({
   actionBtn: { alignItems: 'center', gap: 4 },
   actionIcon: { fontSize: 18 },
   actionLabel: { color: Colors.muted, fontSize: 10, fontWeight: '600' },
+
+  // Engagement bar (like / dislike / views)
+  engagementBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: Spacing.xl, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: Colors.bg,
+  },
+  engBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  engBtnLike: { backgroundColor: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.5)' },
+  engBtnDislike: { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: 'rgba(239,68,68,0.5)' },
+  engIcon: { fontSize: 14 },
+  engCount: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  engViews: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
+
+  // Rate tab
+  rateStarsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 },
+  rateStar: { fontSize: 34, color: 'rgba(255,255,255,0.3)' },
+  rateStarActive: { color: '#fbbf24' },
+  rateFeedbackInput: {
+    width: '100%', backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14,
+    textAlignVertical: 'top', marginBottom: 14, minHeight: 80,
+  },
+  rateMessage: { marginTop: 12, fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  rateReviewsSection: { borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 16, marginTop: 16 },
+  rateSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 16 },
+  rateAvgBox: { alignItems: 'center' },
+  rateAvgValue: { fontSize: 30, fontWeight: '800', color: '#fbbf24', marginBottom: 2 },
+  rateAvgLabel: { fontSize: 11, color: Colors.muted },
+  rateBarRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  rateBarLabel: { fontSize: 10, color: Colors.muted, width: 18 },
+  rateBarBg: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
+  rateBarFill: { height: 5, borderRadius: 3, backgroundColor: '#fbbf24' },
+  rateBarCount: { fontSize: 10, color: Colors.muted, width: 18, textAlign: 'right' },
+  rateReviewsTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 10 },
+  rateReviewItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  rateReviewHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
+  rateReviewName: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  rateReviewDate: { color: Colors.muted, fontSize: 11 },
+  rateReviewStars: { color: '#fbbf24', fontSize: 12, marginBottom: 3 },
+  rateReviewText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
+
+  // Exercise rank
+  exRankBox: {
+    marginTop: 20, padding: 16, borderRadius: 12,
+    backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.2)',
+  },
+  exRankLoading: { color: Colors.muted, fontSize: 13, textAlign: 'center' },
+  exRankEmpty: { color: Colors.muted, fontSize: 13, textAlign: 'center' },
+  exRankBolt: { fontSize: 22, marginBottom: 4 },
+  exRankLabel: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  exRankValue: { color: Colors.success, fontSize: 26, fontWeight: '800', marginVertical: 4 },
+  exRankMeta: { color: Colors.muted, fontSize: 12 },
   tabs: {
     flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.border,
     backgroundColor: Colors.cardAlt, paddingHorizontal: 4,

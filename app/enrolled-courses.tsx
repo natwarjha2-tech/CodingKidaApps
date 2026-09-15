@@ -2,11 +2,25 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-nati
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDashboard } from '@/hooks';
+import { useCourseStore } from '@/store';
 import { Colors } from '@/theme';
+
+// Difficulty badge by progress (mirrors desktop)
+function difficultyByProgress(pct: number): { label: string; color: string } {
+  if (pct >= 70) return { label: '🟠 Advanced', color: '#fdba74' };
+  if (pct >= 30) return { label: '🟡 Intermediate', color: '#fde047' };
+  return { label: '🟢 Beginner', color: '#6ee7b7' };
+}
 
 export default function EnrolledCoursesScreen() {
   const { data, isLoading } = useDashboard();
   const enrolled = data?.enrolledCourses ?? [];
+  const lessonContext = useCourseStore((s) => s.lessonContext);
+
+  // Header stats: total courses + average progress
+  const avgProgress = enrolled.length > 0
+    ? Math.round(enrolled.reduce((s, c) => s + (c.progressPercent ?? 0), 0) / enrolled.length)
+    : 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -33,45 +47,67 @@ export default function EnrolledCoursesScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-          enrolled.map((course) => (
-            <TouchableOpacity
-              key={course.id}
-              style={styles.courseCard}
-              onPress={() => router.push(`/course/${course.id}`)}
-              activeOpacity={0.7}
-            >
-              <View style={styles.courseIconWrap}>
-                <View style={styles.courseIconGlow} />
-                <Text style={styles.courseIcon}>📖</Text>
+          <>
+            {/* Header stats: courses + avg progress (mirrors desktop) */}
+            <View style={styles.statsBar}>
+              <View style={styles.statChip}>
+                <Text style={styles.statChipText}>📚 {enrolled.length} Course{enrolled.length > 1 ? 's' : ''}</Text>
               </View>
-              <View style={styles.courseInfo}>
-                <Text style={styles.courseTitle}>{course.title}</Text>
-                <Text style={styles.courseMeta}>
-                  {course.completedLessons}/{course.totalLessons} lessons completed
-                </Text>
-                <View style={styles.progressBar}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${course.progressPercent}%` as any,
-                        backgroundColor:
-                          course.progressPercent === 100 ? Colors.success : Colors.primary,
-                      },
-                    ]}
-                  />
-                </View>
+              <View style={[styles.statChip, styles.statChipGold]}>
+                <Text style={[styles.statChipText, { color: '#fbbf24' }]}>⚡ {avgProgress}% Progress</Text>
               </View>
-              <Text
-                style={[
-                  styles.percent,
-                  { color: course.progressPercent === 100 ? Colors.success : Colors.purple },
-                ]}
-              >
-                {course.progressPercent}%
-              </Text>
-            </TouchableOpacity>
-          ))
+            </View>
+
+            {enrolled.map((course) => {
+              const pct = course.progressPercent ?? 0;
+              const completed = course.completedLessons ?? 0;
+              const total = course.totalLessons ?? 0;
+              const remaining = Math.max(total - completed, 0);
+              const isComplete = pct >= 100;
+              const diff = difficultyByProgress(pct);
+              const lastLearned = (lessonContext && lessonContext.courseId === course.id) ? lessonContext.lessonTitle : '';
+              return (
+                <TouchableOpacity
+                  key={course.id}
+                  style={styles.courseCard}
+                  onPress={() => router.push(`/course/${course.id}`)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.courseIconWrap}>
+                    <View style={styles.courseIconGlow} />
+                    <Text style={styles.courseIcon}>📖</Text>
+                  </View>
+                  <View style={styles.courseInfo}>
+                    <View style={styles.courseTitleRow}>
+                      <Text style={styles.courseTitle} numberOfLines={1}>{course.title}</Text>
+                      <View style={[styles.diffBadge, { borderColor: `${diff.color}55` }]}>
+                        <Text style={[styles.diffText, { color: diff.color }]}>{diff.label}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.courseMeta}>⚡ {completed} of {total} lessons completed</Text>
+                    {lastLearned ? (
+                      <Text style={styles.courseSub} numberOfLines={1}>📍 Last learned: {lastLearned}</Text>
+                    ) : null}
+                    {!isComplete && remaining > 0 ? (
+                      <Text style={styles.courseSub}>▶ Next: {remaining} lesson{remaining > 1 ? 's' : ''} remaining</Text>
+                    ) : null}
+                    <View style={styles.progressBar}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          { width: `${pct}%` as any, backgroundColor: isComplete ? Colors.success : Colors.primary },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.courseFoot}>
+                      {isComplete ? '✅ Course Complete!' : `⏱ ~${remaining * 8} min remaining`}
+                    </Text>
+                  </View>
+                  <Text style={[styles.percent, { color: isComplete ? Colors.success : Colors.purple }]}>{pct}%</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </>
         )}
 
         <View style={{ height: 32 }} />
@@ -132,9 +168,24 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(108,71,255,0.4)',
   },
   courseIcon: { fontSize: 22, zIndex: 1 },
-  courseInfo: { flex: 1 },
-  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
-  courseMeta: { color: Colors.muted, fontSize: 12, marginBottom: 10 },
+  courseInfo: { flex: 1, minWidth: 0 },
+  courseTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  courseMeta: { color: Colors.muted, fontSize: 12, marginBottom: 4 },
+  courseSub: { color: Colors.muted, fontSize: 11, marginBottom: 4 },
+  courseFoot: { color: Colors.muted, fontSize: 11, marginTop: 6 },
+  diffBadge: {
+    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1,
+    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 1,
+  },
+  diffText: { fontSize: 9, fontWeight: '700' },
+  statsBar: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  statChip: {
+    backgroundColor: 'rgba(139,92,246,0.1)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.2)',
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  statChipGold: { backgroundColor: 'rgba(251,191,36,0.1)', borderColor: 'rgba(251,191,36,0.2)' },
+  statChipText: { color: '#c4b5fd', fontSize: 12, fontWeight: '700' },
   progressBar: {
     height: 6,
     backgroundColor: 'rgba(255,255,255,0.08)',

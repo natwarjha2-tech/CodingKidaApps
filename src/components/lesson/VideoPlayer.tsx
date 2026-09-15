@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Video, { type OnProgressData, type OnLoadData } from 'react-native-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -11,22 +11,50 @@ interface VideoPlayerProps {
   hlsQualities?: string[];
   onProgress?: (percent: number) => void;
   onComplete?: () => void;
+  /** Fired once after ~30s of actual watch time (mirrors desktop view counting). */
+  onViewCounted?: () => void;
+  /** Fired when the user switches quality — reports the selected quality + its URL
+   *  so the parent can download exactly that quality (mirrors desktop). */
+  onQualityChange?: (quality: string, url: string) => void;
 }
 
-export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProgress, onComplete }: VideoPlayerProps) {
+export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProgress, onComplete, onViewCounted, onQualityChange }: VideoPlayerProps) {
   const videoRef = useRef<any>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [hasCompleted, setHasCompleted] = useState(false);
 
-  // Quality
-  const [currentQuality, setCurrentQuality] = useState('Original');
-  const [currentUrl, setCurrentUrl] = useState(videoUrl);
+  // View counting: count ~30s of actual playback progress, fire once (like desktop)
+  const watchedSecs = useRef(0);
+  const lastProgressTime = useRef(0);
+  const viewCounted = useRef(false);
+
+  // Quality — only real available qualities (no "Original") when the video has
+  // quality URLs; otherwise fall back to the raw video so it never breaks.
+  const availableQualities = hlsQualities ?? Object.keys(qualityUrls ?? {});
+  const hasQualities = availableQualities.length > 0;
+  const qualities = hasQualities ? availableQualities : ['Original'];
+  const hasMultipleQualities = qualities.length > 1;
+
+  // Default quality: prefer 720 → else the first available → else Original(raw).
+  const pickDefault = () => {
+    if (!hasQualities) return { q: 'Original', url: videoUrl };
+    const prefer = availableQualities.find((q) => q.replace(/[^0-9]/g, '') === '720') || availableQualities[0];
+    return { q: prefer, url: qualityUrls?.[prefer] || videoUrl };
+  };
+  const _def = pickDefault();
+
+  const [currentQuality, setCurrentQuality] = useState(_def.q);
+  const [currentUrl, setCurrentUrl] = useState(_def.url);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const savedSeek = useRef(0);
 
-  const qualities = ['Original', ...(hlsQualities ?? Object.keys(qualityUrls ?? {}))];
-  const hasMultipleQualities = qualities.length > 1;
+  // Report the initial (default) quality to the parent once, so download uses it
+  // even if the user never opens the quality menu.
+  useEffect(() => {
+    onQualityChange?.(_def.q, _def.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_def.q, _def.url]);
 
   const handleLoad = useCallback((data: OnLoadData) => {
     setDuration(data.duration);
@@ -38,12 +66,22 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
 
   const handleProgress = useCallback((data: OnProgressData) => {
     setCurrentTime(data.currentTime);
+
+    // Count actual watch time: only advancing playback counts (ignore seeks/pauses).
+    const delta = data.currentTime - lastProgressTime.current;
+    if (delta > 0 && delta < 2) watchedSecs.current += delta;
+    lastProgressTime.current = data.currentTime;
+    if (!viewCounted.current && watchedSecs.current >= 30) {
+      viewCounted.current = true;
+      onViewCounted?.();
+    }
+
     if (duration > 0) {
       const pct = Math.round((data.currentTime / duration) * 100);
       onProgress?.(pct);
       if (pct >= 90 && !hasCompleted) { setHasCompleted(true); onComplete?.(); }
     }
-  }, [duration, hasCompleted, onProgress, onComplete]);
+  }, [duration, hasCompleted, onProgress, onComplete, onViewCounted]);
 
   const changeQuality = (q: string) => {
     if (q === currentQuality) { setShowQualityMenu(false); return; }
@@ -53,6 +91,7 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
     setCurrentUrl(url);
     setCurrentQuality(q);
     setShowQualityMenu(false);
+    onQualityChange?.(q, url); // tell parent so download uses the selected quality
   };
 
   if (!videoUrl) {

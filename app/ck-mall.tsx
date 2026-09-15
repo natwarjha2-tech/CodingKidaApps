@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,12 +6,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/api';
 import { Colors } from '@/theme';
 
+interface CoinTx { id: string; type: 'EARNED' | 'SPENT'; coins: number; reason?: string; createdAt: string }
+interface Discount { id?: string; label?: string; percent: number }
+
 export default function CKMallScreen() {
   const queryClient = useQueryClient();
   const [couponCode, setCouponCode] = useState('');
   const [couponMsg, setCouponMsg] = useState<{ text: string; success: boolean } | null>(null);
   const [applying, setApplying] = useState(false);
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const [historyY, setHistoryY] = useState(0);
 
   // Fetch mall data (balance + offers)
   const { data, isLoading } = useQuery({
@@ -26,19 +31,60 @@ export default function CKMallScreen() {
   const balance = data?.balance ?? 0;
   const offers = data?.offers ?? [];
 
-  // Apply coupon code
+  // Redemption history — coin transactions (earned/spent). Mirrors desktop.
+  const { data: coinsData } = useQuery({
+    queryKey: ['coins'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; transactions: CoinTx[] }>('/api/coins');
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 2,
+  });
+  const transactions: CoinTx[] = coinsData?.transactions ?? [];
+
+  // Usable discounts (ready to use at checkout). Endpoint may not exist yet —
+  // fails silently to an empty list (same graceful behaviour as desktop).
+  const { data: discData } = useQuery({
+    queryKey: ['discount'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ success: boolean; discounts: Discount[] }>('/api/discount');
+      return res.data;
+    },
+    staleTime: 1000 * 60 * 2,
+    retry: false,
+  });
+  const discounts: Discount[] = discData?.discounts ?? [];
+
+  // Apply a coupon OR a friend's referral code (mirrors desktop applyCoupon).
+  // Backend /api/mall/redeem accepts both: a known coupon → discount; otherwise
+  // it's treated as a referral code → the user earns coins.
   const handleApplyCoupon = async () => {
     const code = couponCode.trim();
-    if (!code) { setCouponMsg({ text: 'Please enter a coupon code', success: false }); return; }
+    if (!code) { setCouponMsg({ text: 'Please enter a coupon or referral code', success: false }); return; }
     setApplying(true);
     setCouponMsg(null);
     try {
-      const res = await apiClient.post<{ success: boolean; message: string; coupon?: { discount: number } }>('/api/mall/redeem', { couponCode: code });
+      const res = await apiClient.post<{
+        success: boolean; message: string;
+        coupon?: { discount: number };
+        referral?: { coinsAwarded: number };
+      }>('/api/mall/redeem', { couponCode: code });
+
       if (res.data?.success) {
-        setCouponMsg({ text: `✅ ${res.data.message} — ${res.data.coupon?.discount || ''}% off!`, success: true });
+        if (res.data.coupon) {
+          // Discount coupon applied → usable at checkout.
+          setCouponMsg({ text: `✅ ${res.data.message} — ${res.data.coupon.discount}% off!`, success: true });
+          queryClient.invalidateQueries({ queryKey: ['discount'] });
+        } else {
+          // Referral code applied → coins awarded to this user.
+          setCouponMsg({ text: `✅ ${res.data.message}`, success: true });
+          queryClient.invalidateQueries({ queryKey: ['coins'] });
+          queryClient.invalidateQueries({ queryKey: ['referral'] });
+        }
         queryClient.invalidateQueries({ queryKey: ['mall'] });
+        setCouponCode('');
       } else {
-        setCouponMsg({ text: `❌ ${res.data?.message || 'Invalid code'}`, success: false });
+        setCouponMsg({ text: `❌ ${res.data?.message || 'Invalid coupon or referral code'}`, success: false });
       }
     } catch (err: any) {
       setCouponMsg({ text: `❌ ${err?.response?.data?.message || 'Failed to apply'}`, success: false });
@@ -59,6 +105,7 @@ export default function CKMallScreen() {
             Alert.alert('🎉 Success', `${res.data.message}\nNew balance: ${res.data.newBalance} coins`);
             queryClient.invalidateQueries({ queryKey: ['mall'] });
             queryClient.invalidateQueries({ queryKey: ['coins'] });
+            queryClient.invalidateQueries({ queryKey: ['discount'] });
           } else {
             Alert.alert('Error', res.data?.message || 'Could not redeem.');
           }
@@ -82,7 +129,7 @@ export default function CKMallScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         {isLoading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.primary} size="large" />
@@ -94,15 +141,24 @@ export default function CKMallScreen() {
             <View style={styles.balanceCard}>
               <Text style={styles.balanceValue}>🪙 {balance}</Text>
               <Text style={styles.balanceLabel}>Your Coin Balance</Text>
+              <TouchableOpacity
+                style={styles.historyBtn}
+                onPress={() => scrollRef.current?.scrollTo({ y: historyY, animated: true })}
+                activeOpacity={0.8}
+                accessibilityLabel="View redemption history"
+              >
+                <Text style={styles.historyBtnText}>🕘 View History</Text>
+              </TouchableOpacity>
             </View>
 
-            {/* Coupon Code Section */}
+            {/* Coupon / Referral Code Section (mirrors desktop) */}
             <View style={styles.couponCard}>
-              <Text style={styles.couponTitle}>🏷️ Apply Coupon Code</Text>
+              <Text style={styles.couponTitle}>🏷️ Have a coupon or referral code?</Text>
+              <Text style={styles.couponSub}>Enter a coupon for a discount, or a friend's referral code to earn 50 coins.</Text>
               <View style={styles.couponRow}>
                 <TextInput
                   style={styles.couponInput}
-                  placeholder="ENTER COUPON CODE"
+                  placeholder="ENTER COUPON OR REFERRAL CODE"
                   placeholderTextColor={Colors.muted}
                   value={couponCode}
                   onChangeText={setCouponCode}
@@ -154,6 +210,55 @@ export default function CKMallScreen() {
                 ))}
               </View>
             )}
+
+            {/* Redemption / Discount history (mirrors desktop CK Mall) */}
+            <View onLayout={(e) => setHistoryY(e.nativeEvent.layout.y)}>
+              <Text style={styles.sectionTitle}>📜 Redemption History</Text>
+              <Text style={styles.historySub}>Your redeemed rewards, discounts and coin activity.</Text>
+
+              {discounts.length === 0 && transactions.length === 0 ? (
+                <View style={styles.historyEmpty}>
+                  <Text style={styles.historyEmptyText}>No redemptions yet. Redeem a reward above to see it here.</Text>
+                </View>
+              ) : (
+                <View style={styles.historyList}>
+                  {/* Usable discounts first — highlighted as ready to use */}
+                  {discounts.map((d, i) => (
+                    <View key={`disc-${d.id ?? i}`} style={[styles.historyItem, styles.historyItemActive]}>
+                      <View style={[styles.historyIcon, { backgroundColor: 'rgba(34,197,94,0.12)' }]}>
+                        <Text style={{ fontSize: 16 }}>🎟️</Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.historyTitle} numberOfLines={1}>{d.label || `${d.percent}% Discount`}</Text>
+                        <Text style={styles.historyMeta}>Ready to use at checkout</Text>
+                      </View>
+                      <View style={styles.historyBadge}><Text style={styles.historyBadgeText}>{d.percent}% OFF</Text></View>
+                    </View>
+                  ))}
+
+                  {/* Coin transactions — most recent first */}
+                  {transactions.map((tx) => {
+                    const earned = tx.type === 'EARNED';
+                    let when = '';
+                    try { when = new Date(tx.createdAt).toLocaleDateString(); } catch {}
+                    return (
+                      <View key={tx.id} style={styles.historyItem}>
+                        <View style={[styles.historyIcon, { backgroundColor: earned ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)' }]}>
+                          <Text style={{ fontSize: 16 }}>{earned ? '🪙' : '🎁'}</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={styles.historyTitle} numberOfLines={1}>{tx.reason || (earned ? 'Coins earned' : 'Coins spent')}</Text>
+                          <Text style={styles.historyMeta}>{when}</Text>
+                        </View>
+                        <Text style={[styles.historyAmt, { color: earned ? Colors.success : Colors.danger }]}>
+                          {earned ? '+' : '-'}{tx.coins}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
           </>
         )}
         <View style={{ height: 32 }} />
@@ -186,13 +291,44 @@ const styles = StyleSheet.create({
   },
   balanceValue: { fontSize: 28, fontWeight: '800', color: Colors.coin, marginBottom: 4 },
   balanceLabel: { color: Colors.muted, fontSize: 13 },
+  historyBtn: {
+    marginTop: 14, backgroundColor: 'rgba(245,158,11,0.15)',
+    borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)',
+    borderRadius: 20, paddingHorizontal: 18, paddingVertical: 8,
+  },
+  historyBtnText: { color: Colors.coin, fontSize: 13, fontWeight: '700' },
+
+  // Redemption history
+  historySub: { color: Colors.muted, fontSize: 12, marginTop: 4, marginBottom: 14 },
+  historyEmpty: {
+    backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    borderStyle: 'dashed', borderRadius: 14, padding: 22, alignItems: 'center',
+  },
+  historyEmptyText: { color: Colors.muted, fontSize: 13, textAlign: 'center' },
+  historyList: { gap: 10 },
+  historyItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12,
+  },
+  historyItemActive: { borderColor: 'rgba(34,197,94,0.35)' },
+  historyIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  historyTitle: { color: '#fff', fontSize: 13.5, fontWeight: '700' },
+  historyMeta: { color: Colors.muted, fontSize: 11, marginTop: 2 },
+  historyAmt: { fontSize: 15, fontWeight: '800' },
+  historyBadge: {
+    backgroundColor: 'rgba(34,197,94,0.15)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.35)',
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4,
+  },
+  historyBadgeText: { color: Colors.success, fontSize: 12, fontWeight: '800' },
 
   // Coupon
   couponCard: {
     backgroundColor: Colors.card2, borderRadius: 16, padding: 18,
     marginBottom: 20, borderWidth: 1, borderColor: Colors.border,
   },
-  couponTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 12 },
+  couponTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  couponSub: { color: Colors.muted, fontSize: 11.5, marginBottom: 12, lineHeight: 16 },
   couponRow: { flexDirection: 'row', gap: 10 },
   couponInput: {
     flex: 1, backgroundColor: 'rgba(255,255,255,0.04)',

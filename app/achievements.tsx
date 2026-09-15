@@ -39,6 +39,12 @@ export default function AchievementsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        {/* Badges earned count (mirrors desktop) */}
+        {!isLoading && achievements.length > 0 && (
+          <View style={styles.countBadge}>
+            <Text style={styles.countBadgeText}>🏆 {achievements.length} Badge{achievements.length !== 1 ? 's' : ''} Earned</Text>
+          </View>
+        )}
         {isLoading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator color={Colors.primary} size="large" />
@@ -80,7 +86,14 @@ export default function AchievementsScreen() {
                     </View>
                   )}
                 </View>
-                <Text style={styles.dateText}>
+                {/* Awarded to + Instructor · date (mirrors desktop) */}
+                {achievement.studentName ? (
+                  <Text style={styles.metaLine}>
+                    Awarded to: <Text style={styles.metaHighlight}>{achievement.studentName}</Text>
+                  </Text>
+                ) : null}
+                <Text style={styles.metaLine}>
+                  {achievement.instructor ? `Instructor: ${achievement.instructor} · ` : ''}
                   {formatDate(achievement.earnedAt || achievement.createdAt)}
                 </Text>
               </View>
@@ -145,4 +158,12 @@ const styles = StyleSheet.create({
   },
   statBadgeText: { color: Colors.primary, fontSize: 11, fontWeight: '600' },
   dateText: { color: Colors.muted, fontSize: 11 },
+  countBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(251,191,36,0.1)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.2)',
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, marginBottom: 16,
+  },
+  countBadgeText: { color: '#fbbf24', fontSize: 12, fontWeight: '700' },
+  metaLine: { color: Colors.muted, fontSize: 11, lineHeight: 17 },
+  metaHighlight: { color: '#fff', fontWeight: '600' },
 });

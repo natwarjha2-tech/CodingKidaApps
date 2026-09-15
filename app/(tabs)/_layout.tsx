@@ -29,14 +29,14 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: Colors.bg2,
-          borderTopColor: Colors.border,
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#EEF0F5',
           height: 60 + bottomPadding,
           paddingBottom: bottomPadding,
           paddingTop: 6,
         },
-        tabBarActiveTintColor: Colors.purple,
-        tabBarInactiveTintColor: Colors.muted,
+        tabBarActiveTintColor: '#7A3BFF',
+        tabBarInactiveTintColor: '#8A90A2',
       }}
     >
       <Tabs.Screen
@@ -74,6 +74,6 @@ export default function TabsLayout() {
 const styles = StyleSheet.create({
   tabIcon: { alignItems: 'center', justifyContent: 'center', paddingTop: 2, width: 60 },
   emoji: { fontSize: 20 },
-  label: { fontSize: 10, marginTop: 2, color: Colors.muted, textAlign: 'center' },
-  labelActive: { color: Colors.purple, fontWeight: '600' },
+  label: { fontSize: 10, marginTop: 2, color: '#8A90A2', textAlign: 'center' },
+  labelActive: { color: '#7A3BFF', fontWeight: '700' },
 });

@@ -43,6 +43,14 @@
       "expo-splash-screen",
       "expo-dev-client",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#7c3aed",
+          "defaultChannel": "default"
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Allow CodingKida to access your photos for profile picture."

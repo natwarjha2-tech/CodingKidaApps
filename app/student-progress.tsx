@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api';
+import { useXP } from '@/hooks';
 import { Colors } from '@/theme';
 
 function renderStars(rating: number): string {
@@ -13,9 +14,19 @@ function renderStars(rating: number): string {
   return stars;
 }
 
+// Performance label derived from existing overallScore only (matches desktop _spPerfLabel).
+function perfLabel(score: number): string {
+  if (score >= 90) return 'Outstanding';
+  if (score >= 75) return 'Excellent';
+  if (score >= 50) return 'Doing Well';
+  if (score >= 25) return 'Getting Started';
+  return 'Just Beginning';
+}
+
 export default function StudentProgressScreen() {
   const [expandedCourse, setExpandedCourse] = useState<string | null>(null);
   const [showRatingDetail, setShowRatingDetail] = useState(false);
+  const xp = useXP();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['student-progress'],
@@ -84,6 +95,9 @@ export default function StudentProgressScreen() {
               <Text style={styles.overallMeta}>
                 Based on quiz accuracy (70%) + exercise completion (30%) · Score: {data.overallScore}%
               </Text>
+              <View style={styles.perfPill}>
+                <Text style={styles.perfPillText}>{perfLabel(data.overallScore || 0)}</Text>
+              </View>
             </View>
             <View style={styles.overallStats}>
               <View style={styles.miniStat}>
@@ -94,6 +108,12 @@ export default function StudentProgressScreen() {
                 <Text style={styles.miniStatValue}>{courses.length}</Text>
                 <Text style={styles.miniStatLabel}>Courses</Text>
               </View>
+              {xp.ready && (
+                <View style={[styles.miniStat, styles.miniStatXp]}>
+                  <Text style={styles.miniStatValue}>{xp.level.xp}</Text>
+                  <Text style={styles.miniStatLabel}>Total XP</Text>
+                </View>
+              )}
             </View>
           </View>
 
@@ -242,10 +262,17 @@ const styles = StyleSheet.create({
   starsText: { fontSize: 18, color: '#fbbf24' },
   ratingValue: { fontSize: 22, fontWeight: '800', color: '#fff' },
   overallMeta: { fontSize: 11, color: Colors.muted, lineHeight: 16 },
-  overallStats: { flexDirection: 'row', gap: 8 },
-  miniStat: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10, alignItems: 'center' },
+  overallStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' },
+  miniStat: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10, alignItems: 'center', minWidth: 54 },
+  miniStatXp: { backgroundColor: 'rgba(236,72,153,0.1)', borderWidth: 1, borderColor: 'rgba(236,72,153,0.25)' },
   miniStatValue: { fontSize: 14, fontWeight: '800', color: '#fff', marginBottom: 2 },
   miniStatLabel: { fontSize: 9, color: Colors.muted },
+  perfPill: {
+    alignSelf: 'flex-start', marginTop: 10,
+    backgroundColor: 'rgba(139,92,246,0.15)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)',
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4,
+  },
+  perfPillText: { fontSize: 11, fontWeight: '700', color: '#c4b5fd' },
   tapHint: { color: Colors.muted, fontSize: 10, textAlign: 'center', marginTop: 10 },
 
   // Breakdown

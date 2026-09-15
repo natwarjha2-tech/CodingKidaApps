@@ -7,6 +7,7 @@ import {
 import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks';
+import { authApi } from '@/api';
 import { Colors } from '@/theme';
 
 export default function LoginScreen() {
@@ -15,8 +16,62 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const { login, isLoading } = useAuth();
+  const { login, loginWithOtp, isLoading } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
+
+  // OTP (passwordless) login flow
+  const [otpMode, setOtpMode] = useState(false);
+  const [otpStep, setOtpStep] = useState<'email' | 'verify'>('email');
+  const [otpEmail, setOtpEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpMsg, setOtpMsg] = useState<{ text: string; success: boolean } | null>(null);
+
+  const resetOtp = () => {
+    setOtpStep('email');
+    setOtpEmail('');
+    setOtpCode('');
+    setOtpMsg(null);
+    setOtpBusy(false);
+  };
+
+  const handleSendOtp = async () => {
+    const em = otpEmail.trim();
+    if (!em || !em.includes('@')) {
+      setOtpMsg({ text: 'Please enter a valid email address.', success: false });
+      return;
+    }
+    setOtpBusy(true);
+    setOtpMsg(null);
+    try {
+      const data = await authApi.sendOtp(em);
+      if (data.success) {
+        setOtpStep('verify');
+        setOtpMsg({ text: `OTP sent to ${em}. Check your inbox.`, success: true });
+      } else {
+        setOtpMsg({ text: data.message || 'Failed to send OTP.', success: false });
+      }
+    } catch {
+      setOtpMsg({ text: 'Network error. Please check your connection.', success: false });
+    } finally {
+      setOtpBusy(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (!otpCode.trim() || otpCode.trim().length !== 6) {
+      setOtpMsg({ text: 'Please enter the 6-digit OTP.', success: false });
+      return;
+    }
+    setOtpBusy(true);
+    setOtpMsg(null);
+    try {
+      await loginWithOtp(otpEmail.trim(), otpCode.trim(), true);
+    } catch (err: any) {
+      setOtpMsg({ text: err?.message || 'Invalid OTP.', success: false });
+      setOtpBusy(false);
+    }
+  };
 
   // Listen for keyboard show/hide to add bottom padding
   useEffect(() => {
@@ -90,73 +145,147 @@ export default function LoginScreen() {
 
             {/* Login Card */}
             <View style={styles.card}>
-              {/* Email */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Email</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>✉️</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="you@example.com"
-                    placeholderTextColor="#64748b"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
+              {!otpMode ? (
+                <>
+                  {/* Email */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Email</Text>
+                    <View style={styles.inputWrapper}>
+                      <Text style={styles.inputIcon}>✉️</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="you@example.com"
+                        placeholderTextColor="#64748b"
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  </View>
 
-              {/* Password */}
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Password</Text>
-                <View style={styles.inputWrapper}>
-                  <Text style={styles.inputIcon}>🔒</Text>
-                  <TextInput
-                    style={[styles.input, { paddingRight: 48 }]}
-                    placeholder="••••••••"
-                    placeholderTextColor="#64748b"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
-                  />
+                  {/* Password */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Password</Text>
+                    <View style={styles.inputWrapper}>
+                      <Text style={styles.inputIcon}>🔒</Text>
+                      <TextInput
+                        style={[styles.input, { paddingRight: 48 }]}
+                        placeholder="••••••••"
+                        placeholderTextColor="#64748b"
+                        value={password}
+                        onChangeText={setPassword}
+                        secureTextEntry={!showPassword}
+                      />
+                      <TouchableOpacity
+                        style={styles.eyeBtn}
+                        onPress={() => setShowPassword(!showPassword)}
+                      >
+                        <Text style={{ fontSize: 16 }}>{showPassword ? '🙈' : '👁️'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Remember Me */}
                   <TouchableOpacity
-                    style={styles.eyeBtn}
-                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.rememberRow}
+                    onPress={() => setRememberMe(!rememberMe)}
+                    activeOpacity={0.7}
                   >
-                    <Text style={{ fontSize: 16 }}>{showPassword ? '🙈' : '👁️'}</Text>
+                    <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                      {rememberMe && <Text style={styles.checkmark}>✓</Text>}
+                    </View>
+                    <Text style={styles.rememberText}>Remember me for 30 days</Text>
                   </TouchableOpacity>
-                </View>
-              </View>
 
-              {/* Remember Me */}
-              <TouchableOpacity
-                style={styles.rememberRow}
-                onPress={() => setRememberMe(!rememberMe)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
-                  {rememberMe && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-                <Text style={styles.rememberText}>Remember me for 30 days</Text>
-              </TouchableOpacity>
+                  {/* Login Button */}
+                  <TouchableOpacity
+                    style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
+                    onPress={handleLogin}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.loginBtnText}>
+                      {isLoading ? '⏳ Logging in...' : 'Log In  →'}
+                    </Text>
+                  </TouchableOpacity>
 
-              {/* Login Button */}
-              <TouchableOpacity
-                style={[styles.loginBtn, isLoading && styles.loginBtnDisabled]}
-                onPress={handleLogin}
-                disabled={isLoading}
-              >
-                <Text style={styles.loginBtnText}>
-                  {isLoading ? '⏳ Logging in...' : 'Log In  →'}
-                </Text>
-              </TouchableOpacity>
+                  {/* Login with OTP */}
+                  <TouchableOpacity onPress={() => { setOtpMode(true); resetOtp(); }} style={styles.otpToggleRow}>
+                    <Text style={styles.otpToggleText}>📧 Log in with Email OTP</Text>
+                  </TouchableOpacity>
 
-              {/* Forgot Password */}
-              <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} style={styles.forgotRow}>
-                <Text style={styles.forgotText}>Forgot Password?</Text>
-              </TouchableOpacity>
+                  {/* Forgot Password */}
+                  <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} style={styles.forgotRow}>
+                    <Text style={styles.forgotText}>Forgot Password?</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  {/* OTP Email */}
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Email</Text>
+                    <View style={styles.inputWrapper}>
+                      <Text style={styles.inputIcon}>✉️</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="you@example.com"
+                        placeholderTextColor="#64748b"
+                        value={otpEmail}
+                        onChangeText={setOtpEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        editable={otpStep === 'email'}
+                      />
+                    </View>
+                  </View>
+
+                  {/* OTP Code (step 2) */}
+                  {otpStep === 'verify' && (
+                    <View style={styles.formGroup}>
+                      <Text style={styles.label}>Enter 6-digit OTP</Text>
+                      <View style={styles.inputWrapper}>
+                        <Text style={styles.inputIcon}>🔢</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="••••••"
+                          placeholderTextColor="#64748b"
+                          value={otpCode}
+                          onChangeText={(t) => setOtpCode(t.replace(/[^0-9]/g, '').slice(0, 6))}
+                          keyboardType="number-pad"
+                          maxLength={6}
+                        />
+                      </View>
+                    </View>
+                  )}
+
+                  {/* OTP message */}
+                  {otpMsg && (
+                    <Text style={[styles.otpMsg, { color: otpMsg.success ? Colors.success : Colors.danger }]}>
+                      {otpMsg.text}
+                    </Text>
+                  )}
+
+                  {/* Action button: Send OTP / Verify */}
+                  <TouchableOpacity
+                    style={[styles.loginBtn, (otpBusy || isLoading) && styles.loginBtnDisabled]}
+                    onPress={otpStep === 'email' ? handleSendOtp : handleVerifyOtp}
+                    disabled={otpBusy || isLoading}
+                  >
+                    <Text style={styles.loginBtnText}>
+                      {otpStep === 'email'
+                        ? (otpBusy ? '⏳ Sending OTP...' : '📧 Send OTP')
+                        : ((otpBusy || isLoading) ? '⏳ Verifying...' : '✓ Verify OTP')}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Cancel — back to password login */}
+                  <TouchableOpacity onPress={() => { setOtpMode(false); resetOtp(); }} style={styles.forgotRow}>
+                    <Text style={styles.forgotText}>Cancel — use password login instead</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
 
             {/* Sign up link */}
@@ -228,6 +357,10 @@ const styles = StyleSheet.create({
 
   forgotRow: { alignItems: 'center', marginTop: 14 },
   forgotText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
+
+  otpToggleRow: { alignItems: 'center', marginTop: 14 },
+  otpToggleText: { color: '#a78bfa', fontSize: 13, fontWeight: '700' },
+  otpMsg: { fontSize: 12, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
 
   signupRow: { flexDirection: 'row', justifyContent: 'center', paddingBottom: 16 },
   signupText: { color: '#94a3b8', fontSize: 13 },

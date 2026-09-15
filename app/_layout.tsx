@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as Notifications from 'expo-notifications';
 import { useAuthStore } from '@/store';
 import { AuthService, AttendanceService } from '@/services';
 import { isRememberMeValid, isSessionValid, refreshSession, StorageService, USER_KEY } from '@/services/storage.service';
 import { studentApi, apiClient } from '@/api';
 import { Colors } from '@/theme';
+import {
+  registerPushToken,
+} from '@/services/notification.service';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -90,6 +94,7 @@ function _prefetchAllData() {
 
 function AuthInitializer() {
   const { setAuth, clearAuth, setLoading } = useAuthStore();
+  const router = useRouter();
 
   useEffect(() => {
     const init = async () => {
@@ -124,6 +129,9 @@ function AuthInitializer() {
 
           // Pre-fetch fresh data silently in background (updates cache)
           _prefetchAllData();
+
+          // Register push token after login (non-blocking)
+          registerPushToken().catch(() => {});
         } else {
           clearAuth();
         }
@@ -133,6 +141,40 @@ function AuthInitializer() {
     };
     init();
   }, []);
+
+  // Handle push notification tap → navigate to correct screen
+  useEffect(() => {
+    // Notification received while app is in foreground (display only, no nav)
+    const foregroundSub = Notifications.addNotificationReceivedListener(() => {
+      // Notification shown automatically via setNotificationHandler — no extra action needed
+    });
+
+    // Notification tapped by user → open notifications list + auto-open detail popup
+    // (NO deep navigation to feature screens — as per product requirement)
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      try {
+        const data = response.notification.request.content.data as {
+          notificationId?: string;
+          type?: string;
+          action?: { type: string; target: string };
+        };
+
+        // Small delay to ensure app is fully ready before navigating
+        setTimeout(() => {
+          const notifId = data?.notificationId;
+          // Open notifications list; if we know the id, auto-open its popup
+          router.push((notifId ? `/notifications?open=${notifId}` : '/notifications') as any);
+        }, 300);
+      } catch {
+        // Silent fail — notification tap should never crash the app
+      }
+    });
+
+    return () => {
+      foregroundSub.remove();
+      responseSub.remove();
+    };
+  }, [router]);
 
   // App usage time tracking + session refresh on foreground
   const appState = useRef(AppState.currentState);
@@ -194,6 +236,7 @@ export default function RootLayout() {
             <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
           </Stack>
         </QueryClientProvider>
       </SafeAreaProvider>

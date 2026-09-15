@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share } from 'react-native';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share, Modal } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDashboard, useCoins, useWeeklyStreakCount } from '@/hooks';
 import { achievementsApi, weeklyStreakApi, coinsApi } from '@/api';
 import { AttendanceService } from '@/services';
@@ -34,7 +34,41 @@ function formatTime(dateStr: string): string {
   return `${h}:${m}`;
 }
 
+// Gentle daily coding goal for the day-detail progress meter (mirrors desktop CK_DAY_GOAL_MINS).
+const DAY_GOAL_MINS = 20;
+
+// Build the day-detail content (mirrors desktop showDayDetail effort tiers).
+function buildDayDetail(dateKey: string, mins: number, opens: number, mode: 'past' | 'future') {
+  const [y, mo, d] = dateKey.split('-').map(Number);
+  const dateObj = new Date(y, mo - 1, d);
+  const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const title = `${weekdays[dateObj.getDay()]}, ${monthsShort[mo - 1]} ${d}`;
+
+  if (mode === 'future') {
+    return {
+      emoji: '📅', accent: '#a78bfa', title, badge: 'Plan a coding session!',
+      message: `This day is coming up. Set a goal to code for at least ${DAY_GOAL_MINS} minutes and keep your streak strong! 🚀`,
+      showStats: false, mins, opens, pct: 0,
+    };
+  }
+  if (mins <= 0) {
+    return {
+      emoji: '😴', accent: '#64748b', title, badge: 'No coding this day',
+      message: 'Every day counts! Jump back in and earn coins, badges and keep your streak alive. 💪',
+      showStats: false, mins, opens, pct: 0,
+    };
+  }
+  let emoji: string, badge: string, accent: string, message: string;
+  if (mins < 15) { emoji = '🌱'; badge = 'Nice start!'; accent = '#c4b5fd'; message = "You showed up and learned — that's what matters. Keep it up!"; }
+  else if (mins < 30) { emoji = '🔥'; badge = 'Great focus!'; accent = '#a855f7'; message = "Awesome focus today. You're building a strong coding habit!"; }
+  else { emoji = '🚀'; badge = 'Coding superstar!'; accent = '#ec4899'; message = "Incredible effort! You're a true CodingKida superstar today!"; }
+  const pct = Math.min(100, Math.round((mins / DAY_GOAL_MINS) * 100));
+  return { emoji, accent, title, badge, message, showStats: true, mins, opens, pct };
+}
+
 export default function MyReportScreen() {
+  const queryClient = useQueryClient();
   const { data: dashData, isLoading: dashLoading } = useDashboard();
   const { data: coinsData, isLoading: coinsLoading } = useCoins();
   const { data: streakCount } = useWeeklyStreakCount();
@@ -42,6 +76,37 @@ export default function MyReportScreen() {
   const [weekMins, setWeekMins] = useState(0);
   const [calendarDays, setCalendarDays] = useState<{ date: string; day: number; mins: number; active: boolean; isToday: boolean }[]>([]);
   const [selectedBadgeType, setSelectedBadgeType] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  // Calendar day-detail popup (mirrors desktop showDayDetail)
+  const [dayDetail, setDayDetail] = useState<ReturnType<typeof buildDayDetail> | null>(null);
+
+  // Open the per-day detail popup with real attendance data.
+  const openDayDetail = useCallback(async (dateKey: string) => {
+    const todayKey = new Date().toISOString().split('T')[0];
+    const mode: 'past' | 'future' = dateKey > todayKey ? 'future' : 'past';
+    const detail = mode === 'future' ? { mins: 0, opens: 0 } : await AttendanceService.getDayDetail(dateKey);
+    setDayDetail(buildDayDetail(dateKey, detail.mins, detail.opens, mode));
+  }, []);
+
+  // Reload attendance data (also used by refresh)
+  const loadAttendance = useCallback(() => {
+    AttendanceService.getTodayMins().then(setTodayMins);
+    AttendanceService.getWeekMins().then(setWeekMins);
+    AttendanceService.getLast30Days().then(setCalendarDays);
+  }, []);
+
+  // Manual refresh — unified: refresh the ENTIRE app (all queries) + reload
+  // local attendance. Same one-button behaviour as everywhere else.
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await queryClient.invalidateQueries(); // ALL queries → whole app fresh
+      loadAttendance();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, queryClient, loadAttendance]);
 
   // Achievements
   const { data: achievementsData, isLoading: achievementsLoading } = useQuery({
@@ -100,10 +165,8 @@ export default function MyReportScreen() {
 
   // Load attendance data
   useEffect(() => {
-    AttendanceService.getTodayMins().then(setTodayMins);
-    AttendanceService.getWeekMins().then(setWeekMins);
-    AttendanceService.getLast30Days().then(setCalendarDays);
-  }, []);
+    loadAttendance();
+  }, [loadAttendance]);
 
   const enrolledCourses = dashData?.enrolledCourses ?? [];
   const totalEnrolled = dashData?.enrolledCount ?? enrolledCourses.length;
@@ -116,17 +179,72 @@ export default function MyReportScreen() {
     0
   );
 
-  const overallProgress =
-    enrolledCourses.length > 0
-      ? Math.round(
-          enrolledCourses.reduce((sum, c) => sum + (c.progressPercent ?? 0), 0) /
-            enrolledCourses.length
-        )
-      : 0;
+  // KPI: learning-time display — real minutes; show a dash for genuinely-zero
+  // activity instead of a misleading "0 min" (mirrors desktop _spFmtTime).
+  const fmtKpiTime = useCallback((mins: number) => (!mins || mins <= 0 ? '—' : AttendanceService.formatMins(mins)), []);
 
-  // Attendance calendar
-  const activeCalendar = calendarDays;
-  const activeDaysCount = calendarDays.filter((d) => d.active).length;
+  // Active days in the CURRENT calendar week (Mon–Sun), out of 7 — from the
+  // same real attendance records (mirrors desktop _weekActiveDays).
+  const weekActiveDays = useMemo(() => {
+    const wkToday = new Date();
+    const dow = wkToday.getDay();                 // 0=Sun..6=Sat
+    const mondayOffset = dow === 0 ? 6 : dow - 1; // days since Monday
+    const monday = new Date(wkToday); monday.setDate(wkToday.getDate() - mondayOffset); monday.setHours(0, 0, 0, 0);
+    let count = 0;
+    for (const rec of calendarDays) {
+      if (!rec || !rec.active || !rec.date) continue;
+      const p = String(rec.date).split('-');
+      if (p.length !== 3) continue;
+      const rd = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])); rd.setHours(0, 0, 0, 0);
+      if (rd >= monday && rd <= wkToday) count++;
+    }
+    return count;
+  }, [calendarDays]);
+
+  // Monthly calendar (mirrors desktop _renderParentReport attendance calendar):
+  // Mon-first weekday columns, current-month grid with leading pad, real
+  // per-day minutes/active mapped by exact date, intensity tiers, today marker.
+  const monthCal = useMemo(() => {
+    const today = new Date();
+    const curYear = today.getFullYear();
+    const curMonth = today.getMonth(); // 0-based
+    const todayDate = today.getDate();
+
+    // Map real attendance records by their exact calendar date (YYYY:M:D).
+    const byYmd: Record<string, { mins: number; active: boolean }> = {};
+    for (const rec of calendarDays) {
+      if (!rec || !rec.date) continue;
+      const p = String(rec.date).split('-');
+      if (p.length === 3) byYmd[`${Number(p[0])}:${Number(p[1])}:${Number(p[2])}`] = { mins: rec.mins || 0, active: !!rec.active };
+    }
+
+    const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
+    let monthActiveDays = 0;
+    for (let d = 1; d <= daysInMonth && d <= todayDate; d++) {
+      const rec = byYmd[`${curYear}:${curMonth + 1}:${d}`];
+      if (rec && rec.active) monthActiveDays++;
+    }
+
+    const firstDow = new Date(curYear, curMonth, 1).getDay(); // 0=Sun
+    const startPad = firstDow === 0 ? 6 : firstDow - 1;       // Mon-first offset
+
+    type Cell = { key: string; day: number; mins: number; active: boolean; isToday: boolean; isFuture: boolean; intensity: number } | null;
+    const cells: Cell[] = [];
+    for (let i = 0; i < startPad; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const rec = byYmd[`${curYear}:${curMonth + 1}:${d}`];
+      const mins = rec ? rec.mins : 0;
+      const active = rec ? rec.active : false;
+      const isToday = d === todayDate;
+      const isFuture = d > todayDate;
+      const intensity = mins === 0 ? 0 : mins < 15 ? 0.3 : mins < 30 ? 0.6 : 1;
+      const dateKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({ key: dateKey, day: d, mins, active, isToday, isFuture, intensity });
+    }
+
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return { cells, monthActiveDays, daysInMonth, monthLabel: `${monthNames[curMonth]} ${curYear}` };
+  }, [calendarDays]);
 
   // Achievements grouped by badge type
   const achievements: Achievement[] = achievementsData?.achievements ?? [];
@@ -150,6 +268,50 @@ export default function MyReportScreen() {
   const streaks = streakData?.streaks ?? [];
   const streakCompletedCount = streakData?.completedCount ?? streakCount ?? 0;
 
+  // ── Motivation + Next Coding Mission (mirrors desktop _renderParentReport) ──
+  const motivation = useMemo(() => {
+    const cal = calendarDays; // oldest → newest (last 30)
+    const today = new Date();
+    const dow = today.getDay();               // 0=Sun..6=Sat
+    const mondayOffset = dow === 0 ? 6 : dow - 1;
+
+    // This week = last (mondayOffset+1) days; Last week = 7 days before that
+    const thisWeekSlice = cal.slice(-(mondayOffset + 1));
+    const lastWeekSlice = cal.slice(-(mondayOffset + 8), -(mondayOffset + 1));
+    const thisWeekDays = thisWeekSlice.filter((d) => d.active).length;
+    const lastWeekDays = lastWeekSlice.filter((d) => d.active).length;
+
+    // Best week (group all 30 into weeks of 7)
+    let bestWeekDays = 0;
+    for (let i = 0; i < cal.length; i += 7) {
+      const w = cal.slice(i, i + 7).filter((d) => d.active).length;
+      if (w > bestWeekDays) bestWeekDays = w;
+    }
+
+    let icon = '🌱', title = 'Ready for this week\u2019s mission?', text = 'Start a coding session and keep your journey moving!';
+    if (thisWeekDays > 0 && thisWeekDays <= 2) {
+      icon = '🚀'; title = 'You\u2019re getting started!'; text = `You've coded ${thisWeekDays} day${thisWeekDays > 1 ? 's' : ''} this week. Keep the momentum going!`;
+    } else if (thisWeekDays >= 3 && thisWeekDays <= 4) {
+      icon = '🔥'; title = 'You\u2019re on a roll!'; text = `${thisWeekDays} coding days this week! You're crushing it!`;
+    } else if (thisWeekDays >= 5) {
+      icon = '🏆'; title = 'Coding superstar!'; text = `${thisWeekDays} days of coding this week — incredible consistency!`;
+    }
+    if (thisWeekDays > 0 && thisWeekDays > lastWeekDays && thisWeekDays >= bestWeekDays) {
+      icon = '🎉'; title = 'NEW RECORD!'; text = `You just had your strongest learning week! ${thisWeekDays} days of pure coding! 🚀`;
+    }
+
+    // Next mission: beat last week OR do one more day (cap 7)
+    let nextGoal = Math.min(Math.max(lastWeekDays + 1, thisWeekDays + 1), 7);
+    const remaining = Math.max(nextGoal - thisWeekDays, 0);
+    const missionText = remaining === 0
+      ? 'Goal reached! You\u2019re amazing! 🎉'
+      : remaining === 1 ? 'One more coding session! 🚀' : `${remaining} more days to beat your best!`;
+    const missionSub = thisWeekDays >= nextGoal ? 'Keep your streak alive!' : 'Beat your best week!';
+    const missionProgress = nextGoal > 0 ? Math.min(Math.round((thisWeekDays / nextGoal) * 100), 100) : 100;
+
+    return { icon, title, text, thisWeekDays, nextGoal, missionText, missionSub, missionProgress };
+  }, [calendarDays]);
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -158,13 +320,25 @@ export default function MyReportScreen() {
           <Text style={styles.backBtn}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Report</Text>
-        <TouchableOpacity onPress={() => {
-          Share.share({
-            message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${totalEnrolled}\n✅ Lessons Completed: ${totalVideosWatched}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🏆 Achievements: ${achievements.length}\n🔥 Weekly Streak: ${streakCompletedCount}\n🪙 Coins: ${totalCoins}\n\n— CodingKida App`,
-          });
-        }}>
-          <Text style={{ color: Colors.success, fontSize: 12, fontWeight: '600' }}>📤 Share</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          {/* Refresh — pulls latest report data */}
+          <TouchableOpacity onPress={handleRefresh} disabled={refreshing} style={styles.headerActionBtn}>
+            <Text style={{ color: refreshing ? Colors.muted : Colors.primary, fontSize: 13, fontWeight: '600' }}>
+              {refreshing ? '⏳' : '🔄'}
+            </Text>
+          </TouchableOpacity>
+          {/* Share */}
+          <TouchableOpacity
+            style={styles.headerActionBtn}
+            onPress={() => {
+              Share.share({
+                message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${totalEnrolled}\n✅ Lessons Completed: ${totalVideosWatched}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🏆 Achievements: ${achievements.length}\n🔥 Weekly Streak: ${streakCompletedCount}\n🪙 Coins: ${totalCoins}\n\n— CodingKida App`,
+              });
+            }}
+          >
+            <Text style={{ color: Colors.success, fontSize: 12, fontWeight: '600' }}>📤 Share</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -175,70 +349,132 @@ export default function MyReportScreen() {
           </View>
         ) : (
           <>
-            {/* Overall Progress Card */}
-            <View style={styles.overallCard}>
-              <Text style={styles.overallLabel}>Overall Learning Progress</Text>
-              <View style={styles.overallRow}>
-                <View style={styles.progressCircle}>
-                  <Text style={styles.progressPercent}>{overallProgress}%</Text>
+            {/* ─── 4 KPI cards row (mirrors desktop _renderParentReport) ─── */}
+            <View style={styles.kpiGrid}>
+              <View style={[styles.kpiCard, { borderColor: '#8B5CF640' }]}>
+                <View style={[styles.kpiIcon, { backgroundColor: '#8B5CF618' }]}><Text style={styles.kpiEmoji}>📚</Text></View>
+                <View style={styles.kpiBody}>
+                  <Text style={styles.kpiValue}>{totalEnrolled}</Text>
+                  <Text style={styles.kpiLabel}>Courses Enrolled</Text>
+                  <Text style={styles.kpiSub}>total</Text>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.overallSubtext}>
-                    Keep going! You&apos;re making great progress.
-                  </Text>
-                  <View style={styles.progressBarBg}>
-                    <View
-                      style={[styles.progressBarFill, { width: `${overallProgress}%` }]}
-                    />
-                  </View>
+              </View>
+              <View style={[styles.kpiCard, { borderColor: '#22C55E40' }]}>
+                <View style={[styles.kpiIcon, { backgroundColor: '#22C55E18' }]}><Text style={styles.kpiEmoji}>✅</Text></View>
+                <View style={styles.kpiBody}>
+                  <Text style={styles.kpiValue}>{totalVideosWatched}</Text>
+                  <Text style={styles.kpiLabel}>Lessons Completed</Text>
+                  <Text style={styles.kpiSub}>all time</Text>
+                </View>
+              </View>
+              <View style={[styles.kpiCard, { borderColor: '#F59E0B40' }]}>
+                <View style={[styles.kpiIcon, { backgroundColor: '#F59E0B18' }]}><Text style={styles.kpiEmoji}>⏱</Text></View>
+                <View style={styles.kpiBody}>
+                  <Text style={styles.kpiValue}>{fmtKpiTime(todayMins)}</Text>
+                  <Text style={styles.kpiLabel}>Today</Text>
+                  <Text style={styles.kpiSub}>{todayMins > 0 ? 'learning time' : 'no activity yet'}</Text>
+                </View>
+              </View>
+              <View style={[styles.kpiCard, { borderColor: '#EC489940' }]}>
+                <View style={[styles.kpiIcon, { backgroundColor: '#EC489918' }]}><Text style={styles.kpiEmoji}>📅</Text></View>
+                <View style={styles.kpiBody}>
+                  <Text style={styles.kpiValue}>{fmtKpiTime(weekMins)}</Text>
+                  <Text style={styles.kpiLabel}>This Week</Text>
+                  <Text style={styles.kpiSub}>{weekActiveDays} active days / 7</Text>
                 </View>
               </View>
             </View>
 
-            {/* 30-Day Activity Calendar */}
+            {/* ─── Your Coding Journey — monthly calendar (mirrors desktop) ─── */}
             <View style={styles.calendarSection}>
-              <Text style={styles.calendarTitle}>📅 30-Day Activity</Text>
-              <Text style={styles.calendarMeta}>
-                {activeDaysCount} active day{activeDaysCount !== 1 ? 's' : ''} out of 30
-              </Text>
-              <View style={styles.calendarGrid}>
-                {activeCalendar.map((day, idx) => (
-                  <View
-                    key={idx}
-                    style={[
-                      styles.calendarDay,
-                      {
-                        backgroundColor: day.active
-                          ? day.isToday
-                            ? Colors.primary
-                            : Colors.successLight
-                          : Colors.card2,
-                        borderWidth: day.isToday ? 2 : 1,
-                        borderColor: day.isToday
-                          ? Colors.primary
-                          : day.active
-                          ? Colors.success
-                          : Colors.border,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.calendarDayText,
-                        {
-                          color: day.active
-                            ? day.isToday
-                              ? '#fff'
-                              : Colors.success
-                            : Colors.muted,
-                        },
-                      ]}
-                    >
-                      {day.day}
-                    </Text>
-                  </View>
-                ))}
+              <Text style={styles.calendarTitle}>🗓 Your Coding Journey</Text>
+
+              {/* Active Days strip (X / days-in-month) */}
+              <View style={styles.calActiveStrip}>
+                <Text style={styles.calActiveValue}>
+                  {monthCal.monthActiveDays} <Text style={styles.calActiveDenom}>/ {monthCal.daysInMonth}</Text>
+                </Text>
+                <Text style={styles.calActiveLabel}>Active Days</Text>
               </View>
+
+              <View style={styles.calBox}>
+                <Text style={styles.calMonthLabel}>{monthCal.monthLabel}</Text>
+
+                {/* Weekday header (Mon-first) */}
+                <View style={styles.calWeekRow}>
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                    <Text key={d} style={styles.calWeekday}>{d}</Text>
+                  ))}
+                </View>
+
+                {/* Month grid */}
+                <View style={styles.calGrid}>
+                  {monthCal.cells.map((cell, idx) => {
+                    if (!cell) return <View key={`pad-${idx}`} style={styles.calCellPad} />;
+                    // Colour tiers (mirrors desktop): inactive / Started / Focused / On Fire.
+                    let bg = Colors.card2, borderColor = Colors.border, textColor = Colors.muted;
+                    if (cell.active && cell.intensity <= 0.3) { bg = 'rgba(124,58,237,0.20)'; borderColor = 'rgba(124,58,237,0.35)'; textColor = '#C4B5FD'; }
+                    else if (cell.active && cell.intensity <= 0.6) { bg = '#7C3AED'; borderColor = 'rgba(168,85,247,0.5)'; textColor = '#fff'; }
+                    else if (cell.active) { bg = '#A855F7'; borderColor = 'rgba(236,72,153,0.5)'; textColor = '#fff'; }
+                    if (cell.isFuture) { bg = 'rgba(255,255,255,0.02)'; borderColor = 'rgba(139,92,246,0.15)'; textColor = Colors.muted; }
+                    return (
+                      <TouchableOpacity
+                        key={cell.key}
+                        activeOpacity={0.7}
+                        onPress={() => openDayDetail(cell.key)}
+                        style={[
+                          styles.calCell,
+                          { backgroundColor: bg, borderColor: cell.isToday ? '#A78BFA' : borderColor, borderWidth: cell.isToday ? 2 : 1 },
+                        ]}
+                      >
+                        <Text style={[styles.calCellText, { color: cell.isToday ? '#A78BFA' : textColor, fontWeight: cell.isToday || cell.active ? '700' : '500' }]}>
+                          {cell.day}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {/* Legend */}
+                <View style={styles.calLegend}>
+                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border }]} /><Text style={styles.calLegendText}>Inactive</Text></View>
+                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: 'rgba(124,58,237,0.35)' }]} /><Text style={styles.calLegendText}>Started</Text></View>
+                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#7C3AED' }]} /><Text style={styles.calLegendText}>Focused</Text></View>
+                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#A855F7' }]} /><Text style={styles.calLegendText}>On Fire</Text></View>
+                </View>
+              </View>
+            </View>
+
+            {/* Motivation + Next Coding Mission (mirrors desktop) */}
+            <View style={styles.motivCard}>
+              <View style={styles.motivRow}>
+                <Text style={styles.motivIcon}>{motivation.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.motivTitle}>{motivation.title}</Text>
+                  <Text style={styles.motivText}>{motivation.text}</Text>
+                </View>
+              </View>
+              {/* This Week progress */}
+              <View style={styles.motivWeekBox}>
+                <View style={styles.motivWeekHead}>
+                  <Text style={styles.motivWeekLabel}>This Week</Text>
+                  <Text style={styles.motivWeekVal}>{motivation.thisWeekDays} / 7 days</Text>
+                </View>
+                <View style={styles.motivBarBg}>
+                  <View style={[styles.motivBarFill, { width: `${Math.round((motivation.thisWeekDays / 7) * 100)}%` }]} />
+                </View>
+              </View>
+            </View>
+
+            {/* Next Coding Mission */}
+            <View style={styles.missionCard}>
+              <Text style={styles.missionLabel}>🎯 NEXT CODING MISSION</Text>
+              <Text style={styles.missionSub}>{motivation.missionSub}</Text>
+              <Text style={styles.missionText}>{motivation.missionText}</Text>
+              <View style={styles.missionBarBg}>
+                <View style={[styles.missionBarFill, { width: `${motivation.missionProgress}%` }]} />
+              </View>
+              <Text style={styles.missionProgressText}>{motivation.thisWeekDays} / {motivation.nextGoal} days this week</Text>
             </View>
 
             {/* Stats Row */}
@@ -510,6 +746,53 @@ export default function MyReportScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* Day-detail popup (mirrors desktop showDayDetail) */}
+      <Modal visible={!!dayDetail} transparent animationType="fade" onRequestClose={() => setDayDetail(null)}>
+        <TouchableOpacity style={styles.dayOverlay} activeOpacity={1} onPress={() => setDayDetail(null)}>
+          <TouchableOpacity activeOpacity={1} style={[styles.dayCard, { borderColor: `${dayDetail?.accent ?? Colors.primary}55` }]}>
+            {dayDetail && (
+              <>
+                <View style={styles.dayHead}>
+                  <View style={styles.dayHeadLeft}>
+                    <Text style={{ fontSize: 26 }}>{dayDetail.emoji}</Text>
+                    <Text style={styles.dayTitle}>{dayDetail.title}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.dayClose} onPress={() => setDayDetail(null)}>
+                    <Text style={styles.dayCloseText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.dayBadge, { color: dayDetail.accent }]}>{dayDetail.badge}</Text>
+
+                {dayDetail.showStats && (
+                  <>
+                    <View style={styles.dayStatsRow}>
+                      <View style={styles.dayStat}>
+                        <Text style={styles.dayStatValue}>{AttendanceService.formatMins(dayDetail.mins)}</Text>
+                        <Text style={styles.dayStatLabel}>🕒 Learning time</Text>
+                      </View>
+                      <View style={styles.dayStat}>
+                        <Text style={styles.dayStatValue}>{dayDetail.opens}</Text>
+                        <Text style={styles.dayStatLabel}>📲 Time{dayDetail.opens === 1 ? '' : 's'} opened</Text>
+                      </View>
+                    </View>
+                    <View style={styles.dayGoalHead}>
+                      <Text style={styles.dayGoalLabel}>Daily goal ({DAY_GOAL_MINS} min)</Text>
+                      <Text style={[styles.dayGoalPct, { color: dayDetail.accent }]}>{dayDetail.pct}%</Text>
+                    </View>
+                    <View style={styles.dayGoalTrack}>
+                      <View style={[styles.dayGoalFill, { width: `${dayDetail.pct}%` as any, backgroundColor: dayDetail.accent }]} />
+                    </View>
+                  </>
+                )}
+
+                <Text style={styles.dayMessage}>{dayDetail.message}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -527,8 +810,37 @@ const styles = StyleSheet.create({
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
   headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerActionBtn: { paddingVertical: 4, paddingHorizontal: 2 },
   content: { padding: 16 },
   loadingState: { alignItems: 'center', padding: 60, gap: 12 },
+
+  // Motivation + Next Mission
+  motivCard: {
+    backgroundColor: 'rgba(139,92,246,0.06)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.15)',
+    borderRadius: 14, padding: 16, marginBottom: 12,
+  },
+  motivRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  motivIcon: { fontSize: 26 },
+  motivTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  motivText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
+  motivWeekBox: { backgroundColor: 'rgba(139,92,246,0.06)', borderRadius: 10, padding: 12 },
+  motivWeekHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  motivWeekLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
+  motivWeekVal: { color: '#c4b5fd', fontSize: 11, fontWeight: '700' },
+  motivBarBg: { height: 5, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden' },
+  motivBarFill: { height: 5, borderRadius: 10, backgroundColor: '#8b5cf6' },
+
+  missionCard: {
+    backgroundColor: 'rgba(251,191,36,0.05)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.15)',
+    borderRadius: 14, padding: 16, marginBottom: 24,
+  },
+  missionLabel: { color: '#fbbf24', fontSize: 11, fontWeight: '800', letterSpacing: 0.5, marginBottom: 4 },
+  missionSub: { color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 8 },
+  missionText: { color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '700', marginBottom: 10 },
+  missionBarBg: { height: 7, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', marginBottom: 5 },
+  missionBarFill: { height: 7, borderRadius: 10, backgroundColor: '#fbbf24' },
+  missionProgressText: { color: 'rgba(255,255,255,0.35)', fontSize: 11 },
   loadingText: { color: Colors.muted, fontSize: 14 },
 
   // Overall Progress
@@ -566,19 +878,75 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
 
+  // KPI cards row (desktop-parity)
+  kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 20 },
+  kpiCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    flexBasis: '47%', flexGrow: 1,
+    backgroundColor: Colors.card2, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  kpiIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  kpiEmoji: { fontSize: 18 },
+  kpiBody: { flex: 1 },
+  kpiValue: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  kpiLabel: { color: '#cbd5e1', fontSize: 11, fontWeight: '600', marginTop: 1 },
+  kpiSub: { color: Colors.muted, fontSize: 10, marginTop: 1 },
+
   // Calendar
   calendarSection: { marginBottom: 24 },
-  calendarTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  calendarTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 },
   calendarMeta: { color: Colors.muted, fontSize: 12, marginBottom: 12 },
-  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  calendarDay: {
-    width: '13%',
-    aspectRatio: 1,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
+
+  // Monthly calendar (desktop-parity)
+  calActiveStrip: {
+    alignSelf: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(139,92,246,0.06)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.12)',
+    borderRadius: 10, paddingVertical: 8, paddingHorizontal: 24, marginBottom: 14, minWidth: 150,
   },
-  calendarDayText: { fontSize: 10, fontWeight: '600' },
+  calActiveValue: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  calActiveDenom: { color: Colors.muted, fontSize: 11, fontWeight: '500' },
+  calActiveLabel: { color: Colors.muted, fontSize: 11, marginTop: 2 },
+  calBox: {
+    backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 14, padding: 14,
+  },
+  calMonthLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center', marginBottom: 10 },
+  calWeekRow: { flexDirection: 'row', marginBottom: 6 },
+  calWeekday: { flex: 1, textAlign: 'center', color: '#64748B', fontSize: 10, fontWeight: '600' },
+  calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calCell: {
+    width: `${100 / 7}%`, aspectRatio: 1, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    // slightly inset so cells breathe like the desktop gap
+    borderStyle: 'solid',
+  },
+  calCellPad: { width: `${100 / 7}%`, aspectRatio: 1 },
+  calCellText: { fontSize: 11 },
+  calLegend: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 14, marginTop: 14 },
+  calLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  calLegendDot: { width: 9, height: 9, borderRadius: 3 },
+  calLegendText: { color: '#64748B', fontSize: 10 },
+
+  // Day-detail popup
+  dayOverlay: { flex: 1, backgroundColor: 'rgba(5,5,15,0.72)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  dayCard: { width: '100%', maxWidth: 340, backgroundColor: Colors.bg2, borderRadius: 20, padding: 22, borderWidth: 1 },
+  dayHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  dayHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  dayTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  dayClose: { width: 28, height: 28, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+  dayCloseText: { color: Colors.muted, fontSize: 14, fontWeight: '700' },
+  dayBadge: { fontSize: 15, fontWeight: '800', marginBottom: 12 },
+  dayStatsRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  dayStat: { flex: 1, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 12, alignItems: 'center' },
+  dayStatValue: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  dayStatLabel: { color: Colors.muted, fontSize: 10, marginTop: 3 },
+  dayGoalHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  dayGoalLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
+  dayGoalPct: { fontSize: 11, fontWeight: '800' },
+  dayGoalTrack: { height: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
+  dayGoalFill: { height: '100%', borderRadius: 10 },
+  dayMessage: { color: '#cbd5e1', fontSize: 13, lineHeight: 20 },
 
   // Stats
   statsGrid: {

@@ -5,4 +5,7 @@ export { coursesApi } from './courses.api';
 export { quizApi } from './quiz.api';
 export { exerciseApi } from './exercise.api';
 export { homeworkApi } from './homework.api';
-export { leaderboardApi, coinsApi, achievementsApi, aiMentorApi, weeklyStreakApi, progressApi, mediaApi } from './misc.api';
+export { leaderboardApi, coinsApi, achievementsApi, aiMentorApi, weeklyStreakApi, progressApi, mediaApi, lessonApi, feedbackApi } from './misc.api';
+export type { LessonReactionData, LessonReview, LessonReviewsData } from './misc.api';
+export { referralApi } from './referral.api';
+export type { ReferralInfo } from './referral.api';

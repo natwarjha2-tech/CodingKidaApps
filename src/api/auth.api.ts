@@ -15,4 +15,15 @@ export const authApi = {
 
   forgotPassword: (email: string) =>
     apiClient.post('/api/auth/forgot-password', { email }).then((r) => r.data),
+
+  // Passwordless email OTP login (mirrors desktop)
+  sendOtp: (email: string) =>
+    apiClient
+      .post<{ success: boolean; message?: string }>('/api/auth/send-otp', { email })
+      .then((r) => r.data),
+
+  verifyOtp: (email: string, otp: string) =>
+    apiClient
+      .post<AuthResponse>('/api/auth/verify-otp', { email, otp })
+      .then((r) => r.data),
 };

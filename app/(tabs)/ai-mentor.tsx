@@ -5,7 +5,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { aiMentorApi } from '@/api';
-import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
+import { Spacing, Typography, FontWeight, Radius } from '@/theme';
+
+// Light theme palette (UI only — consistent with the rest of the app)
+const L = {
+  bg: '#EEF5FF', ink: '#1E2233', sub: '#8A90A2', blue: '#2F6BFF', blueSoft: '#E6EEFF',
+  purple: '#7A3BFF', purpleSoft: '#E8DEFF', line: '#E2E7F0', card: '#FFFFFF',
+};
 
 interface Message {
   id: string;
@@ -65,7 +71,7 @@ export default function AiMentorScreen() {
           <TextInput
             style={styles.input}
             placeholder="Ask anything..."
-            placeholderTextColor={Colors.muted}
+            placeholderTextColor={L.sub}
             value={input}
             onChangeText={setInput}
             multiline
@@ -81,28 +87,28 @@ export default function AiMentorScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg },
-  title: { color: Colors.white, fontSize: Typography.xl, fontWeight: FontWeight.extrabold, padding: Spacing.xl, paddingBottom: Spacing.md },
+  container: { flex: 1, backgroundColor: L.bg },
+  title: { color: '#151A2E', fontSize: Typography.xl, fontWeight: FontWeight.extrabold, padding: Spacing.xl, paddingBottom: Spacing.md },
   messages: { padding: Spacing.xl, gap: Spacing.md, paddingBottom: Spacing.xxxl },
   bubble: { maxWidth: '85%', borderRadius: Radius.md, padding: Spacing.md, borderWidth: 1 },
-  userBubble: { alignSelf: 'flex-end', backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
-  aiBubble: { alignSelf: 'flex-start', backgroundColor: Colors.card, borderColor: Colors.border },
-  bubbleLabel: { color: Colors.muted, fontSize: Typography.xs, fontWeight: FontWeight.bold, marginBottom: 4 },
-  bubbleText: { color: Colors.text, fontSize: Typography.sm, lineHeight: 20 },
+  userBubble: { alignSelf: 'flex-end', backgroundColor: L.blueSoft, borderColor: L.blue },
+  aiBubble: { alignSelf: 'flex-start', backgroundColor: L.card, borderColor: L.line },
+  bubbleLabel: { color: L.sub, fontSize: Typography.xs, fontWeight: FontWeight.bold, marginBottom: 4 },
+  bubbleText: { color: L.ink, fontSize: Typography.sm, lineHeight: 20 },
   inputRow: {
     flexDirection: 'row', gap: Spacing.sm,
-    padding: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.border,
-    backgroundColor: Colors.bg,
+    padding: Spacing.lg, borderTopWidth: 1, borderTopColor: L.line,
+    backgroundColor: L.bg,
   },
   input: {
-    flex: 1, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md, padding: Spacing.md, color: Colors.white,
+    flex: 1, backgroundColor: L.card, borderWidth: 1, borderColor: L.line,
+    borderRadius: Radius.md, padding: Spacing.md, color: L.ink,
     fontSize: Typography.sm, maxHeight: 100,
   },
   sendBtn: {
-    backgroundColor: Colors.primary, borderRadius: Radius.md,
+    backgroundColor: L.blue, borderRadius: Radius.md,
     paddingHorizontal: Spacing.lg, justifyContent: 'center',
   },
   sendBtnDisabled: { opacity: 0.5 },
-  sendText: { color: Colors.white, fontWeight: FontWeight.bold, fontSize: Typography.sm },
+  sendText: { color: '#FFFFFF', fontWeight: FontWeight.bold, fontSize: Typography.sm },
 });

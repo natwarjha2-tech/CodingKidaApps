@@ -14,6 +14,15 @@ export const AuthService = {
     return { token: data.token, user: data.user };
   },
 
+  // Establish a session from an already-obtained token+user (e.g. OTP login).
+  loginWithToken: async (token: string, user: User, rememberMe = false): Promise<void> => {
+    await StorageService.set(TOKEN_KEY, token);
+    await StorageService.setObject(USER_KEY, user);
+    await setSession();
+    if (rememberMe) await setRememberMe();
+    else await clearRememberMe();
+  },
+
   signup: async (payload: SignupPayload): Promise<{ token: string; user: User }> => {
     const data = await authApi.signup(payload);
     if (!data.success || !data.token) throw new Error(data.message ?? 'Signup failed');

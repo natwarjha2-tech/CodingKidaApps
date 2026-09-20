@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDashboard, useCoins, useWeeklyStreakCount } from '@/hooks';
 import { achievementsApi, weeklyStreakApi, coinsApi } from '@/api';
 import { AttendanceService } from '@/services';
+import { formatCoinTx } from '@/utils/coinTx.util';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
 
@@ -351,22 +352,24 @@ export default function MyReportScreen() {
           <>
             {/* ─── 4 KPI cards row (mirrors desktop _renderParentReport) ─── */}
             <View style={styles.kpiGrid}>
-              <View style={[styles.kpiCard, { borderColor: '#8B5CF640' }]}>
+              {/* Clickable → opens the enrolled-courses list */}
+              <TouchableOpacity style={[styles.kpiCard, { borderColor: '#8B5CF640' }]} activeOpacity={0.7} onPress={() => router.push('/enrolled-courses')}>
                 <View style={[styles.kpiIcon, { backgroundColor: '#8B5CF618' }]}><Text style={styles.kpiEmoji}>📚</Text></View>
                 <View style={styles.kpiBody}>
                   <Text style={styles.kpiValue}>{totalEnrolled}</Text>
                   <Text style={styles.kpiLabel}>Courses Enrolled</Text>
-                  <Text style={styles.kpiSub}>total</Text>
+                  <Text style={styles.kpiSub}>view all →</Text>
                 </View>
-              </View>
-              <View style={[styles.kpiCard, { borderColor: '#22C55E40' }]}>
+              </TouchableOpacity>
+              {/* Clickable → opens the completed-videos list */}
+              <TouchableOpacity style={[styles.kpiCard, { borderColor: '#22C55E40' }]} activeOpacity={0.7} onPress={() => router.push('/completed-videos')}>
                 <View style={[styles.kpiIcon, { backgroundColor: '#22C55E18' }]}><Text style={styles.kpiEmoji}>✅</Text></View>
                 <View style={styles.kpiBody}>
                   <Text style={styles.kpiValue}>{totalVideosWatched}</Text>
                   <Text style={styles.kpiLabel}>Lessons Completed</Text>
-                  <Text style={styles.kpiSub}>all time</Text>
+                  <Text style={styles.kpiSub}>view all →</Text>
                 </View>
-              </View>
+              </TouchableOpacity>
               <View style={[styles.kpiCard, { borderColor: '#F59E0B40' }]}>
                 <View style={[styles.kpiIcon, { backgroundColor: '#F59E0B18' }]}><Text style={styles.kpiEmoji}>⏱</Text></View>
                 <View style={styles.kpiBody}>
@@ -475,30 +478,6 @@ export default function MyReportScreen() {
                 <View style={[styles.missionBarFill, { width: `${motivation.missionProgress}%` }]} />
               </View>
               <Text style={styles.missionProgressText}>{motivation.thisWeekDays} / {motivation.nextGoal} days this week</Text>
-            </View>
-
-            {/* Stats Row */}
-            <View style={styles.statsGrid}>
-              <TouchableOpacity style={styles.statCard} onPress={() => router.push('/enrolled-courses')}>
-                <Text style={styles.statEmoji}>📚</Text>
-                <Text style={styles.statValue}>{totalEnrolled}</Text>
-                <Text style={styles.statLabel}>Enrolled Courses</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.statCard} onPress={() => router.push('/completed-videos')}>
-                <Text style={styles.statEmoji}>✅</Text>
-                <Text style={styles.statValue}>{totalVideosWatched}</Text>
-                <Text style={styles.statLabel}>Video Completed</Text>
-              </TouchableOpacity>
-              <View style={styles.statCard}>
-                <Text style={styles.statEmoji}>⏱</Text>
-                <Text style={styles.statValue}>{AttendanceService.formatMins(todayMins)}</Text>
-                <Text style={styles.statLabel}>Today</Text>
-              </View>
-              <View style={styles.statCard}>
-                <Text style={styles.statEmoji}>📅</Text>
-                <Text style={styles.statValue}>{AttendanceService.formatMins(weekMins)}</Text>
-                <Text style={styles.statLabel}>This Week</Text>
-              </View>
             </View>
 
             {/* ═══════════ ACHIEVEMENTS SECTION ═══════════ */}
@@ -684,20 +663,26 @@ export default function MyReportScreen() {
                     <Text style={styles.emptyText}>No rewards yet. Complete quizzes to earn coins!</Text>
                   </View>
                 ) : (
-                  transactions.map((tx: any, i: number) => (
-                    <View key={i} style={styles.txItem}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.txReason}>{tx.reason}</Text>
+                  transactions.map((tx: any, i: number) => {
+                    const disp = formatCoinTx(tx);
+                    return (
+                      <View key={i} style={styles.txItem}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.txReason} numberOfLines={2}>{disp.title}</Text>
+                          {disp.subtitle ? (
+                            <Text style={styles.txSub} numberOfLines={2}>{disp.subtitle}</Text>
+                          ) : null}
+                        </View>
+                        <Text style={[
+                          styles.txCoins,
+                          { color: tx.type === 'EARNED' ? Colors.success : Colors.danger },
+                        ]}>
+                          {tx.type === 'EARNED' ? '+' : '-'}{tx.coins}
+                        </Text>
+                        <Text style={styles.txTime}>{formatTime(tx.createdAt)}</Text>
                       </View>
-                      <Text style={[
-                        styles.txCoins,
-                        { color: tx.type === 'EARNED' ? Colors.success : Colors.danger },
-                      ]}>
-                        {tx.type === 'EARNED' ? '+' : '-'}{tx.coins}
-                      </Text>
-                      <Text style={styles.txTime}>{formatTime(tx.createdAt)}</Text>
-                    </View>
-                  ))
+                    );
+                  })
                 )}
               </>
             )}
@@ -1078,7 +1063,7 @@ const styles = StyleSheet.create({
 
   txItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: Colors.card2,
     borderRadius: 12,
     padding: 12,
@@ -1087,7 +1072,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: 8,
   },
-  txReason: { color: '#fff', fontSize: 13, fontWeight: '500' },
+  txReason: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  txSub: { color: Colors.muted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   txCoins: { fontSize: 14, fontWeight: '700' },
   txTime: { color: Colors.muted, fontSize: 11, width: 42 },
 

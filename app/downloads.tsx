@@ -42,10 +42,15 @@ export default function DownloadsScreen() {
     ]);
   };
 
+  // Human-readable file size with proper unit (B / KB / MB / GB). The actual
+  // value comes straight from the downloaded file (bytes) — only the unit label
+  // is derived, never fabricated. Empty string when size is unknown.
   const formatSize = (bytes?: number) => {
-    if (!bytes) return '';
-    const mb = bytes / (1024 * 1024);
-    return mb > 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1024).toFixed(0)} KB`;
+    if (!bytes || bytes <= 0) return '';
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${bytes} B`;
   };
 
   const courseIds = Object.keys(organized);
@@ -209,7 +214,7 @@ const styles = StyleSheet.create({
   itemIconText: { fontSize: 18 },
   itemInfo: { flex: 1 },
   itemTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 4 },
-  itemMeta: { flexDirection: 'row', gap: 8 },
+  itemMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, rowGap: 4 },
   itemType: { color: Colors.muted, fontSize: 11 },
   itemQuality: {
     color: Colors.purple, fontSize: 10, fontWeight: '700',

@@ -1,11 +1,32 @@
-import { StorageService } from './storage.service';
+import { StorageService, userScopedKey, getCurrentUserId } from './storage.service';
 
-const ATTENDANCE_KEY = 'ck_attendance';
+const ATTENDANCE_BASE = 'ck_attendance';
 
 // Maximum single session duration: 4 hours (anything above = device left open accidentally)
 const MAX_SESSION_MINS = 240;
 // Maximum daily total: 16 hours (reasonable cap — user can't actively learn more than this)
 const MAX_DAILY_MINS = 960;
+
+// Per-user attendance key (`ck_attendance_<userId>`) so different users on the
+// same device each get their own daily/weekly time. One-time migration moves any
+// legacy global `ck_attendance` into the current user's key.
+let _migratedForUser: string | null = null;
+async function attendanceKey(): Promise<string> {
+  const key = await userScopedKey(ATTENDANCE_BASE);
+  const userId = await getCurrentUserId();
+  if (userId && _migratedForUser !== userId && key !== ATTENDANCE_BASE) {
+    _migratedForUser = userId;
+    const scoped = await StorageService.getObject<AttendanceData>(key);
+    if (!scoped) {
+      const legacy = await StorageService.getObject<AttendanceData>(ATTENDANCE_BASE);
+      if (legacy && Object.keys(legacy).length > 0) {
+        await StorageService.setObject(key, legacy);
+        await StorageService.delete(ATTENDANCE_BASE);
+      }
+    }
+  }
+  return key;
+}
 
 interface DayData {
   totalMins: number;
@@ -69,14 +90,14 @@ export const AttendanceService = {
       }
     }
 
-    await StorageService.setObject(ATTENDANCE_KEY, data);
+    await StorageService.setObject(await attendanceKey(), data);
   },
 
   /**
-   * Get all attendance data
+   * Get all attendance data (for the current user)
    */
   getData: async (): Promise<AttendanceData> => {
-    const data = await StorageService.getObject<AttendanceData>(ATTENDANCE_KEY);
+    const data = await StorageService.getObject<AttendanceData>(await attendanceKey());
     return data ?? {};
   },
 
@@ -91,7 +112,7 @@ export const AttendanceService = {
     // Auto-fix: if corrupted data exceeds cap, reset today
     if (mins > MAX_DAILY_MINS) {
       data[today] = { totalMins: 0, sessions: [] };
-      await StorageService.setObject(ATTENDANCE_KEY, data);
+      await StorageService.setObject(await attendanceKey(), data);
       return 0;
     }
 
@@ -171,6 +192,6 @@ export const AttendanceService = {
     const data = await AttendanceService.getData();
     const today = getTodayKey();
     delete data[today];
-    await StorageService.setObject(ATTENDANCE_KEY, data);
+    await StorageService.setObject(await attendanceKey(), data);
   },
 };

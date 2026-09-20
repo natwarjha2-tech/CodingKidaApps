@@ -120,6 +120,10 @@ export interface LessonReviewsData {
 }
 
 export const feedbackApi = {
+  // Rating submit is a single DB insert on the server, but the survey table's
+  // JSON-path queries can make the request slow under load. Give it a generous
+  // per-request timeout (30s) so a slow-but-successful save is never shown as a
+  // false "Network error". Overrides the axios client's default 15s timeout.
   submit: (payload: { rating: number; feedback?: string; lessonId: string; lessonTitle?: string }) =>
     apiClient
       .post<{ success: boolean; message?: string }>('/api/feedback', {
@@ -127,11 +131,13 @@ export const feedbackApi = {
         feedback: payload.feedback ?? '',
         lessonId: payload.lessonId,
         lessonTitle: payload.lessonTitle ?? '',
-      })
+      }, { timeout: 30000 })
       .then((r) => r.data),
 
+  // Reviews list also reads the survey table (unindexed JSON path) — give it a
+  // longer timeout so it doesn't fail on larger datasets. Non-blocking anyway.
   getLessonReviews: (lessonId: string) =>
     apiClient
-      .get<LessonReviewsData>(`/api/feedback/lesson?lessonId=${lessonId}`)
+      .get<LessonReviewsData>(`/api/feedback/lesson?lessonId=${lessonId}`, { timeout: 30000 })
       .then((r) => r.data),
 };

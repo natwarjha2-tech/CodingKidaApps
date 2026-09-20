@@ -5,9 +5,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/theme';
+import { useNotifications, patchNotificationsCache, NOTIFICATIONS_QUERY_KEY } from '@/hooks';
 import {
-  syncNotifications,
   markNotifAsRead,
   markAllNotifsAsRead,
   deleteNotif,
@@ -120,41 +121,37 @@ function NotifCard({
 
 export default function NotificationsScreen() {
   const params = useLocalSearchParams<{ open?: string }>();
-  const [items, setItems] = useState<NotifItem[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<NotifItem | null>(null); // popup detail
+  const [refreshing, setRefreshing] = useState(false);
+
+  // React Query → instant render from cache, fresh sync in background.
+  const { data, isLoading, refetch } = useNotifications();
+  const items = data?.items ?? [];
+  const unreadCount = data?.unreadCount ?? 0;
+  // Only show the full-screen spinner when there is genuinely nothing to show
+  // yet (first ever load with an empty cache). Otherwise render instantly.
+  const loading = isLoading && items.length === 0;
 
   const loadNotifications = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
     try {
-      const result = await syncNotifications();
-      setItems(result.items);
-      setUnreadCount(result.unreadCount);
-    } catch {}
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch]);
 
-  useEffect(() => {
-    loadNotifications();
-  }, [loadNotifications]);
-
-  // ── Handlers ──
+  // ── Handlers ── (optimistic cache patches → instant UI + consistent badge)
 
   const handlePress = useCallback((item: NotifItem) => {
-    // Mark as read (optimistic)
     if (!item.read) {
-      setItems(prev => prev.map(n => n.id === item.id ? { ...n, read: true } : n));
-      setUnreadCount(prev => Math.max(0, prev - 1));
+      patchNotificationsCache(queryClient, (list) => list.map(n => n.id === item.id ? { ...n, read: true } : n));
       markNotifAsRead(item.id); // fire & forget
     }
-
     // Open detail popup (NO navigation / page redirect)
     setSelected({ ...item, read: true });
-  }, []);
+  }, [queryClient]);
 
   // Auto-open a specific notification popup when arriving via push tap (?open=<id>)
   useEffect(() => {
@@ -164,30 +161,26 @@ export default function NotificationsScreen() {
   }, [params.open, items, handlePress]);
 
   const handleDelete = useCallback(async (id: string) => {
-    const isUnread = items.find(n => n.id === id)?.read === false;
-    setItems(prev => prev.filter(n => n.id !== id));
-    if (isUnread) setUnreadCount(prev => Math.max(0, prev - 1));
+    patchNotificationsCache(queryClient, (list) => list.filter(n => n.id !== id));
     deleteNotif(id); // fire & forget
-  }, [items]);
+  }, [queryClient]);
 
   const handleMarkAllRead = useCallback(async () => {
-    setItems(prev => prev.map(n => ({ ...n, read: true })));
-    setUnreadCount(0);
+    patchNotificationsCache(queryClient, (list) => list.map(n => ({ ...n, read: true })));
     markAllNotifsAsRead(); // fire & forget
-  }, []);
+  }, [queryClient]);
 
   const handleClearAll = useCallback(() => {
     Alert.alert('Clear All', 'Are you sure you want to delete all notifications?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Clear', style: 'destructive', onPress: () => {
-          setItems([]);
-          setUnreadCount(0);
-          clearAllNotifs(); // fire & forget
+          queryClient.setQueryData(NOTIFICATIONS_QUERY_KEY, { items: [], nextCursor: null, unreadCount: 0 });
+          clearAllNotifs(); // fire & forget (also clears the AsyncStorage cache)
         },
       },
     ]);
-  }, []);
+  }, [queryClient]);
 
   // ── Render ──
 

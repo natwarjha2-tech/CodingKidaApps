@@ -158,11 +158,12 @@ export default function CKMallScreen() {
               <View style={styles.couponRow}>
                 <TextInput
                   style={styles.couponInput}
-                  placeholder="ENTER COUPON OR REFERRAL CODE"
+                  placeholder="Coupon or referral code"
                   placeholderTextColor={Colors.muted}
                   value={couponCode}
                   onChangeText={setCouponCode}
                   autoCapitalize="characters"
+                  numberOfLines={1}
                 />
                 <TouchableOpacity style={styles.couponBtn} onPress={handleApplyCoupon} disabled={applying}>
                   {applying ? (
@@ -329,16 +330,16 @@ const styles = StyleSheet.create({
   },
   couponTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
   couponSub: { color: Colors.muted, fontSize: 11.5, marginBottom: 12, lineHeight: 16 },
-  couponRow: { flexDirection: 'row', gap: 10 },
+  couponRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
   couponInput: {
-    flex: 1, backgroundColor: 'rgba(255,255,255,0.04)',
+    flex: 1, minWidth: 0, backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14,
+    paddingHorizontal: 12, paddingVertical: 12, color: '#fff', fontSize: 13,
     textTransform: 'uppercase',
   },
   couponBtn: {
     backgroundColor: Colors.primary, borderRadius: 10,
-    paddingHorizontal: 20, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center',
   },
   couponBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   couponMsg: { marginTop: 8, fontSize: 12, fontWeight: '600' },

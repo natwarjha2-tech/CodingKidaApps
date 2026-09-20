@@ -1,10 +1,11 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, type FC } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, Image, ScrollView, ImageBackground, Animated } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCourses, useCoins, useRefreshAll } from '@/hooks';
 import { coursesApi } from '@/api';
+import { CoinsModal } from '@/components/common/CoinsModal';
 import { formatCourseDuration, courseLessonCount, courseStudents } from '@/utils/course.util';
 
 // Light theme palette (UI only — consistent with Dashboard)
@@ -16,20 +17,33 @@ const L = {
 
 // Subject thumbnail image / tint from course title (UI only). Real desktop
 // course images reused; unknown subjects fall back to a coloured emoji tile.
-let imgC: any = null, imgJava: any = null, imgPython: any = null, imgAI: any = null, heroImg: any = null;
+let imgC: any = null, imgJava: any = null, imgPython: any = null, heroImg: any = null;
 try { imgC = require('../../assets/courses/c.jpeg'); } catch {}
 try { imgJava = require('../../assets/courses/java.jpeg'); } catch {}
 try { imgPython = require('../../assets/courses/python.jpeg'); } catch {}
-try { imgAI = require('../../assets/logos/ai.png'); } catch {}
 try { heroImg = require('../../assets/courses/courses-hero.png'); } catch {}
 
-function courseThumb(title: string): { img: any; icon: string; tint: string } {
+// Vector banners (exact desktop SVGs) for the non-image subjects. Rendered as
+// components via react-native-svg-transformer so any future course reuses them.
+import DsaBanner from '../../assets/courses/dsa-banner.svg';
+import WebBanner from '../../assets/courses/web-banner.svg';
+import RoboticsBanner from '../../assets/courses/robotics-banner.svg';
+import AiBanner from '../../assets/courses/ai-banner.svg';
+import ProblemBanner from '../../assets/courses/problem-banner.svg';
+
+// Course card visual: prefer the real image (C/Java/Python jpeg), else the
+// desktop SVG banner (DSA/Web/Robotics/AI/Problem Solving), else a coloured
+// emoji tile. Mirrors the desktop getSubjectTheme mapping exactly.
+function courseThumb(title: string): { img?: any; Svg?: FC<any>; icon: string; tint: string } {
   const t = (title || '').toLowerCase().trim();
   if (t.includes('python')) return { img: imgPython, icon: '🐍', tint: '#E4EEF7' };
   if (t.includes('java') && !t.includes('javascript')) return { img: imgJava, icon: '☕', tint: '#FDE7E7' };
-  if (t.includes('ai') || t.includes('intelligence')) return { img: imgAI, icon: '🧠', tint: '#EEE9FF' };
   if (t === 'c' || t.startsWith('c ') || t.includes('c programming')) return { img: imgC, icon: 'C', tint: '#E4F8EC' };
-  if (t.includes('web') || t.includes('html')) return { img: null, icon: '🌐', tint: '#FDE7DE' };
+  if (t.includes('dsa') || t.includes('data structure') || t.includes('algorithm')) return { Svg: DsaBanner, icon: '🧩', tint: '#EEE9FF' };
+  if (t.includes('web') || t.includes('html')) return { Svg: WebBanner, icon: '🌐', tint: '#E4F1FB' };
+  if (t.includes('robot')) return { Svg: RoboticsBanner, icon: '🤖', tint: '#EAECEF' };
+  if (t.includes('artificial') || t === 'ai' || t.startsWith('ai ') || t.includes(' ai') || t.includes('intelligence') || t.includes('machine learning')) return { Svg: AiBanner, icon: '🧠', tint: '#FCE4F1' };
+  if (t.includes('problem')) return { Svg: ProblemBanner, icon: '💡', tint: '#E4F8EC' };
   if (t.includes('scratch') || t.includes('game') || t.includes('kid')) return { img: null, icon: '🎮', tint: '#FFF3DC' };
   return { img: null, icon: '📘', tint: L.purpleSoft };
 }
@@ -43,6 +57,7 @@ export default function CoursesScreen() {
   const { data: allData } = useCourses('All', '');
   const { data: coinsData } = useCoins();
   const totalCoins = coinsData?.totalCoins ?? 0;
+  const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const queryClient = useQueryClient();
   const { refreshAll, refreshing, spin } = useRefreshAll();
 
@@ -80,11 +95,13 @@ export default function CoursesScreen() {
           <Text style={styles.tagline}>Learn  •  Practice  •  Grow</Text>
         </View>
         <View style={styles.topActions}>
-          <View style={styles.coinPill}><Text style={styles.coinTxt}>🪙 {totalCoins}</Text></View>
+          <TouchableOpacity style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7} accessibilityLabel="Coins">
+            <Text style={styles.coinTxt}>🪙 {totalCoins}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={refreshAll} disabled={refreshing} activeOpacity={0.7}>
             <Animated.Text style={{ transform: [{ rotate: spin }] }}>🔄</Animated.Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7}><Text>🔔</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications"><Text>🔔</Text></TouchableOpacity>
         </View>
       </View>
 
@@ -145,6 +162,7 @@ export default function CoursesScreen() {
 
       {/* Courses Grid (scrolls independently below fixed header) */}
       <FlatList
+          style={styles.grid}
           data={gridData}
           keyExtractor={(item) => item.id}
           numColumns={2}
@@ -169,10 +187,13 @@ export default function CoursesScreen() {
                 onPress={() => router.push(`/course/${item.id}`)}
                 activeOpacity={0.9}
               >
-                {/* Thumbnail — real subject image (desktop) or coloured emoji tile */}
+                {/* Thumbnail — real subject image (C/Java/Python), desktop SVG
+                    banner (DSA/Web/Robotics/AI/Problem), else coloured emoji tile */}
                 <View style={[styles.thumb, { backgroundColor: th.tint }]}>
                   {th.img ? (
                     <Image source={th.img} style={styles.thumbImg} resizeMode="cover" />
+                  ) : th.Svg ? (
+                    <th.Svg width="100%" height="100%" preserveAspectRatio="xMidYMid slice" />
                   ) : (
                     <Text style={styles.thumbIcon}>{th.icon}</Text>
                   )}
@@ -228,6 +249,9 @@ export default function CoursesScreen() {
             );
           }}
         />
+
+      {/* Coins Modal — same shared modal as Dashboard (consistent behaviour) */}
+      <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
     </SafeAreaView>
   );
 }
@@ -290,7 +314,9 @@ const styles = StyleSheet.create({
   filterTabText: { color: L.sub, fontSize: 12, fontWeight: '700' },
   filterTabTextActive: { color: '#fff' },
 
-  // Course list
+  // Course list — grid fills the remaining height below the fixed header so it
+  // scrolls the full screen (not just half).
+  grid: { flex: 1 },
   list: { paddingHorizontal: 12, paddingBottom: 32, paddingTop: 8 },
   row: { gap: 12, marginBottom: 12 },
 

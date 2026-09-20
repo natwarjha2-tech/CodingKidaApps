@@ -210,6 +210,9 @@ export default function LoginScreen() {
                     </Text>
                   </TouchableOpacity>
 
+                  {/* Helper line above OTP login — guides users without a password */}
+                  <Text style={styles.otpHint}>Don&apos;t have account? Login with email.</Text>
+
                   {/* Login with OTP */}
                   <TouchableOpacity onPress={() => { setOtpMode(true); resetOtp(); }} style={styles.otpToggleRow}>
                     <Text style={styles.otpToggleText}>📧 Log in with Email OTP</Text>
@@ -358,7 +361,8 @@ const styles = StyleSheet.create({
   forgotRow: { alignItems: 'center', marginTop: 14 },
   forgotText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
 
-  otpToggleRow: { alignItems: 'center', marginTop: 14 },
+  otpHint: { color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 16 },
+  otpToggleRow: { alignItems: 'center', marginTop: 6 },
   otpToggleText: { color: '#a78bfa', fontSize: 13, fontWeight: '700' },
   otpMsg: { fontSize: 12, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
 

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ScreenCapture from 'expo-screen-capture';
 import { mediaApi } from '@/api';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
@@ -22,6 +23,20 @@ export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
   const [loading, setLoading] = useState(true);
   const [viewerContent, setViewerContent] = useState<{ type: 'url' | 'html'; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // For local PDFs the base64 is NOT inlined into the HTML (that breaks large
+  // files). It is held here and pushed into the WebView after load, in chunks,
+  // via injectJavaScript — keeps the initial HTML tiny so big PDFs render fine.
+  const localB64Ref = useRef<string | null>(null);
+  const webRef = useRef<WebView>(null);
+
+  // Block screenshots / screen recording while a PDF is open; restore on close.
+  useEffect(() => {
+    if (!visible) return;
+    ScreenCapture.preventScreenCaptureAsync().catch(() => {});
+    return () => {
+      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+    };
+  }, [visible]);
 
   const handleOpen = async () => {
     if (!pdfUrl) return;
@@ -52,14 +67,20 @@ export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
           }
         }
 
-        // Use pdf.js CDN to render PDF in WebView (works like desktop app's canvas rendering)
+        // Hold the base64 out-of-band; it is streamed into the WebView after
+        // load (see onLoadEnd → injectJavaScript). The HTML itself stays tiny so
+        // large PDFs no longer blow the WebView's HTML/memory limit (white screen).
+        localB64Ref.current = base64Content;
+
+        // pdf.js renders to <canvas> (image, not selectable text) → no copy/paste
+        // possible. user-select:none adds belt-and-braces. No save/share options.
         const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=3.0,user-scalable=yes">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
 body { background:#1a1a2e; overflow-x:hidden; }
 canvas { display:block; margin:8px auto; max-width:100%; }
 #loading { color:#94a3b8; text-align:center; padding:40px; font-family:sans-serif; font-size:14px; }
@@ -69,33 +90,48 @@ canvas { display:block; margin:8px auto; max-width:100%; }
 <div id="loading">Loading PDF...</div>
 <div id="pages"></div>
 <script>
-var pdfData = atob("${base64Content}");
-var loadingTask = pdfjsLib.getDocument({data: pdfData});
-loadingTask.promise.then(function(pdf) {
-  document.getElementById('loading').style.display = 'none';
-  var container = document.getElementById('pages');
-  var pixelRatio = Math.max(window.devicePixelRatio || 2, 3);
-  for (var i = 1; i <= pdf.numPages; i++) {
-    (function(pageNum) {
-      pdf.getPage(pageNum).then(function(page) {
-        var baseScale = (window.innerWidth) / page.getViewport({scale:1}).width;
-        var scale = baseScale * pixelRatio;
-        var viewport = page.getViewport({scale: scale});
-        var canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = '100%';
-        canvas.style.height = 'auto';
-        canvas.style.display = 'block';
-        container.appendChild(canvas);
-        page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
-      });
-    })(i);
+// The base64 is delivered in chunks from React Native to avoid a single huge
+// string. window.__pdfChunks collects them; window.__renderPdf() runs pdf.js.
+window.__pdfChunks = [];
+window.__pushPdfChunk = function(chunk) { window.__pdfChunks.push(chunk); };
+window.__renderPdf = function() {
+  try {
+    var b64 = window.__pdfChunks.join('');
+    window.__pdfChunks = [];
+    var raw = atob(b64);
+    var bytes = new Uint8Array(raw.length);
+    for (var k = 0; k < raw.length; k++) { bytes[k] = raw.charCodeAt(k); }
+    var loadingTask = pdfjsLib.getDocument({data: bytes});
+    loadingTask.promise.then(function(pdf) {
+      document.getElementById('loading').style.display = 'none';
+      var container = document.getElementById('pages');
+      var pixelRatio = Math.max(window.devicePixelRatio || 2, 3);
+      for (var i = 1; i <= pdf.numPages; i++) {
+        (function(pageNum) {
+          pdf.getPage(pageNum).then(function(page) {
+            var baseScale = (window.innerWidth) / page.getViewport({scale:1}).width;
+            var scale = baseScale * pixelRatio;
+            var viewport = page.getViewport({scale: scale});
+            var canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            canvas.style.width = '100%';
+            canvas.style.height = 'auto';
+            canvas.style.display = 'block';
+            container.appendChild(canvas);
+            page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
+          });
+        })(i);
+      }
+    }).catch(function(err) {
+      document.getElementById('loading').textContent = 'Failed to render PDF: ' + err.message;
+      document.getElementById('loading').style.color = '#ef4444';
+    });
+  } catch (e) {
+    document.getElementById('loading').textContent = 'Failed to render PDF.';
+    document.getElementById('loading').style.color = '#ef4444';
   }
-}).catch(function(err) {
-  document.getElementById('loading').textContent = 'Failed to render PDF: ' + err.message;
-  document.getElementById('loading').style.color = '#ef4444';
-});
+};
 </script>
 </body>
 </html>`;
@@ -137,7 +173,7 @@ loadingTask.promise.then(function(pdf) {
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => { onClose(); setViewerContent(null); setError(null); }}>
+          <TouchableOpacity onPress={() => { onClose(); setViewerContent(null); setError(null); localB64Ref.current = null; }}>
             <Text style={styles.closeBtn}>✕ Close</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>📄 PDF Notes</Text>
@@ -160,6 +196,7 @@ loadingTask.promise.then(function(pdf) {
           </View>
         ) : viewerContent ? (
           <WebView
+            ref={webRef}
             source={viewerContent.type === 'html' ? { html: viewerContent.content } : { uri: viewerContent.content }}
             style={styles.webview}
             startInLoadingState
@@ -172,6 +209,21 @@ loadingTask.promise.then(function(pdf) {
             domStorageEnabled={true}
             originWhitelist={['*']}
             allowFileAccess={true}
+            onLoadEnd={() => {
+              // Stream a local PDF's base64 into the WebView in chunks after the
+              // page (with pdf.js) has loaded, then trigger the render. Remote
+              // (Google Docs) PDFs have no local base64, so this is skipped.
+              const b64 = localB64Ref.current;
+              if (viewerContent.type !== 'html' || !b64 || !webRef.current) return;
+              const CHUNK = 64 * 1024; // 64KB per inject — safe for the JS bridge
+              for (let i = 0; i < b64.length; i += CHUNK) {
+                const part = b64.slice(i, i + CHUNK).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                webRef.current.injectJavaScript(`window.__pushPdfChunk('${part}');true;`);
+              }
+              webRef.current.injectJavaScript('window.__renderPdf && window.__renderPdf();true;');
+              // Free the RN-side copy once handed off.
+              localB64Ref.current = null;
+            }}
           />
         ) : null}
       </View>

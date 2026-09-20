@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { CourseDetail, Lesson, Module } from '@/types';
+import { saveLastLesson } from '@/utils/lastLesson.util';
 
 interface LessonContext {
   courseId: string;
@@ -28,19 +29,20 @@ export const useCourseStore = create<CourseStore>((set) => ({
 
   setActiveCourse: (course) => set({ activeCourse: course }),
 
-  setActiveLesson: (lesson, module, courseId, courseTitle) =>
-    set({
-      activeLesson: lesson,
-      activeModule: module,
-      lessonContext: {
-        courseId,
-        moduleId: module.id,
-        lessonId: lesson.id,
-        courseTitle,
-        moduleTitle: module.title,
-        lessonTitle: lesson.title,
-      },
-    }),
+  setActiveLesson: (lesson, module, courseId, courseTitle) => {
+    const ctx = {
+      courseId,
+      moduleId: module.id,
+      lessonId: lesson.id,
+      courseTitle,
+      moduleTitle: module.title,
+      lessonTitle: lesson.title,
+    };
+    set({ activeLesson: lesson, activeModule: module, lessonContext: ctx });
+    // Persist (user-scoped, 15-day window) so Continue-Learning survives an app
+    // restart / a few days away. Fire-and-forget — never blocks navigation.
+    void saveLastLesson(ctx);
+  },
 
   clearLesson: () =>
     set({ activeLesson: null, activeModule: null, lessonContext: null }),

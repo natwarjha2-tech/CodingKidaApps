@@ -161,35 +161,34 @@ export interface NotifSyncResult {
 }
 
 /**
- * Sync notifications from server (cursor-based).
- * Returns latest notifications since last sync.
+ * Sync notifications from server.
+ *
+ * IMPORTANT: This always fetches the FULL latest list (top `limit`), never an
+ * incremental "after cursor" slice. The previous cursor-based approach advanced
+ * the cursor to `now()` on every open and then overwrote the cache with the
+ * server's (empty) "items newer than cursor" response — which made all
+ * notifications disappear on the second open. The notification list is small,
+ * so a full refresh each time is correct, simple, and bug-free. The cache is
+ * replaced with the authoritative full list for instant/offline render.
  */
 export async function syncNotifications(): Promise<NotifSyncResult> {
   try {
-    const cursor = await AsyncStorage.getItem(NOTIF_CURSOR_KEY);
-
-    const body: Record<string, unknown> = { action: 'sync', limit: 30 };
-    if (cursor) body.after = cursor;
-
-    const res = await apiClient.post('/api/notifications', body);
+    const res = await apiClient.post('/api/notifications', { action: 'sync', limit: 30 });
     const data = res.data;
 
     if (data.success) {
-      // Save cursor for next incremental sync
-      await AsyncStorage.setItem(NOTIF_CURSOR_KEY, new Date().toISOString());
-
-      // Cache notifications in AsyncStorage for offline access
-      await AsyncStorage.setItem(NOTIF_CACHE_KEY, JSON.stringify(data.items || []));
-
+      const items: NotifItem[] = data.items || [];
+      // Replace the cache with the full authoritative list.
+      await AsyncStorage.setItem(NOTIF_CACHE_KEY, JSON.stringify(items));
       return {
-        items: data.items || [],
+        items,
         nextCursor: data.nextCursor || null,
         unreadCount: data.unreadCount || 0,
       };
     }
   } catch {}
 
-  // Fallback: return cached data
+  // Fallback: return cached data (offline / request failed).
   try {
     const cached = await AsyncStorage.getItem(NOTIF_CACHE_KEY);
     const items: NotifItem[] = cached ? JSON.parse(cached) : [];
@@ -197,6 +196,19 @@ export async function syncNotifications(): Promise<NotifSyncResult> {
     return { items, nextCursor: null, unreadCount };
   } catch {
     return { items: [], nextCursor: null, unreadCount: 0 };
+  }
+}
+
+/**
+ * Read the locally cached notifications synchronously-ish (for React Query
+ * initialData → instant first render, no spinner). Never throws.
+ */
+export async function getCachedNotifications(): Promise<NotifItem[]> {
+  try {
+    const cached = await AsyncStorage.getItem(NOTIF_CACHE_KEY);
+    return cached ? JSON.parse(cached) : [];
+  } catch {
+    return [];
   }
 }
 

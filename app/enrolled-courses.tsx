@@ -1,9 +1,20 @@
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useDashboard } from '@/hooks';
+import { useDashboard, useCourses } from '@/hooks';
 import { useCourseStore } from '@/store';
+import { courseDurationSeconds } from '@/utils/course.util';
 import { Colors } from '@/theme';
+
+// Human "X min / Xh Ym remaining" from seconds. '' when unknown (hide, no fake).
+function formatRemaining(totalSec: number): string {
+  const sec = Math.max(0, Math.round(totalSec));
+  if (sec <= 0) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  if (h > 0) return `${h}h${m > 0 ? ` ${m}m` : ''}`;
+  return `${Math.max(m, 1)} min`;
+}
 
 // Difficulty badge by progress (mirrors desktop)
 function difficultyByProgress(pct: number): { label: string; color: string } {
@@ -16,6 +27,10 @@ export default function EnrolledCoursesScreen() {
   const { data, isLoading } = useDashboard();
   const enrolled = data?.enrolledCourses ?? [];
   const lessonContext = useCourseStore((s) => s.lessonContext);
+  // Course list (cached/prefetched) carries the real total duration per course —
+  // dashboard doesn't. Reuse it to compute a real, proportional remaining time.
+  const { data: allCoursesData } = useCourses('All', '');
+  const allCourses = allCoursesData?.courses ?? [];
 
   // Header stats: total courses + average progress
   const avgProgress = enrolled.length > 0
@@ -66,6 +81,11 @@ export default function EnrolledCoursesScreen() {
               const isComplete = pct >= 100;
               const diff = difficultyByProgress(pct);
               const lastLearned = (lessonContext && lessonContext.courseId === course.id) ? lessonContext.lessonTitle : '';
+              // Real remaining time: course's total duration × (remaining/total lessons).
+              // Real backend duration (list route); '' when unavailable → chip hidden.
+              const totalSec = courseDurationSeconds(allCourses.find((c) => c.id === course.id) ?? ({} as any));
+              const remainingSec = total > 0 ? totalSec * (remaining / total) : 0;
+              const remainingLabel = formatRemaining(remainingSec);
               return (
                 <TouchableOpacity
                   key={course.id}
@@ -99,9 +119,11 @@ export default function EnrolledCoursesScreen() {
                         ]}
                       />
                     </View>
-                    <Text style={styles.courseFoot}>
-                      {isComplete ? '✅ Course Complete!' : `⏱ ~${remaining * 8} min remaining`}
-                    </Text>
+                    {isComplete ? (
+                      <Text style={styles.courseFoot}>✅ Course Complete!</Text>
+                    ) : remainingLabel ? (
+                      <Text style={styles.courseFoot}>⏱ ~{remainingLabel} remaining</Text>
+                    ) : null}
                   </View>
                   <Text style={[styles.percent, { color: isComplete ? Colors.success : Colors.purple }]}>{pct}%</Text>
                 </TouchableOpacity>

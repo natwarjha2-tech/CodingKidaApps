@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { achievementsApi, leaderboardApi, weeklyStreakApi, coursesApi } from '@/api';
+import { achievementsApi, leaderboardApi, weeklyStreakApi, coursesApi, studentApi } from '@/api';
 import { useDashboard } from './useDashboard';
 import { useAuthStore } from '@/store';
 
@@ -30,6 +30,14 @@ export const usePrefetchDashboard = () => {
       queryKey: ['courses', 'All', ''],
       queryFn: () => coursesApi.getAll('All', ''),
       staleTime: 1000 * 60 * 5,
+    });
+
+    // Prefetch student profile (joined date) so the Profile card shows instantly
+    // — no awkward delayed load. Same key/staleTime the Profile screen uses.
+    queryClient.prefetchQuery({
+      queryKey: ['student-profile'],
+      queryFn: () => studentApi.getProfile(),
+      staleTime: 1000 * 60 * 10,
     });
   }, [isAuthenticated]);
 

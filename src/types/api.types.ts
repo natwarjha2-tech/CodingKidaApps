@@ -51,6 +51,11 @@ export interface CoinTransaction {
   coins: number;
   reason: string;
   createdAt: string;
+  // Course → Module → Lesson hierarchy (present for quiz-reward transactions;
+  // null for referral / coupon / coding — those fall back to `reason`).
+  courseTitle?: string | null;
+  moduleTitle?: string | null;
+  lessonTitle?: string | null;
 }
 
 export interface CoinsData {

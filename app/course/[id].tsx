@@ -2,12 +2,12 @@ import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useCourseDetail } from '@/hooks';
+import { useCourseDetail, useCourses } from '@/hooks';
 import { useCourseStore } from '@/store';
 import { DownloadService } from '@/services';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import type { ModuleMaterial } from '@/types';
-import { formatCourseDuration, courseLessonCount, courseStudents, courseDurationSeconds } from '@/utils/course.util';
+import { formatCourseDuration, courseLessonCount, courseStudents, courseDurationSeconds, courseRating } from '@/utils/course.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 // Icon + color per study-material file type (mirrors desktop)
@@ -23,6 +23,10 @@ function materialIcon(fileType: string): { icon: string; color: string } {
 export default function CourseDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data, isLoading } = useCourseDetail(id);
+  // Course list is already cached (dashboard/courses/profile keep it warm) and
+  // the list route computes the real feedback-based rating — reuse it here for
+  // the hero rating (Option B), no extra requests. Falls back gracefully.
+  const { data: allCoursesData } = useCourses('All', '');
   const setActiveLesson = useCourseStore((s) => s.setActiveLesson);
   const setActiveCourse = useCourseStore((s) => s.setActiveCourse);
 
@@ -156,9 +160,14 @@ export default function CourseDetailScreen() {
             ].filter(Boolean).join(' · ')}
           </Text>
           <View style={styles.badges}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>⭐ {course.rating || '—'}</Text>
-            </View>
+            {(() => {
+              const rating = courseRating(course, allCoursesData?.courses);
+              return (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>⭐ {rating > 0 ? rating : '—'}</Text>
+                </View>
+              );
+            })()}
             <View style={styles.badge}>
               <Text style={styles.badgeText}>👥 {courseStudents(course)}</Text>
             </View>

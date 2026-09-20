@@ -5,6 +5,7 @@ export { useQuiz, useExercise, useHomework } from './useLesson';
 export { useCoins } from './useCoins';
 export { useWeeklyStreakCount, useWeeklyStreakSummary } from './useWeeklyStreak';
 export { usePrefetchDashboard } from './usePrefetchDashboard';
+export { useNotifications, usePrefetchNotifications, patchNotificationsCache, NOTIFICATIONS_QUERY_KEY } from './useNotifications';
 export { useXP } from './useXP';
 export type { XPSnapshot } from './useXP';
 export { useSupportContact } from './useSupportContact';

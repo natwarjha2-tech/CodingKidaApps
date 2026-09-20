@@ -30,6 +30,32 @@ export const StorageService = {
 
 export const TOKEN_KEY = 'ck_token';
 export const USER_KEY = 'ck_user';
+
+/**
+ * Current logged-in user id (from the stored user object). Used to scope
+ * per-user local data (downloads, watchlist, last-lesson) so different users on
+ * the same device never see each other's content. Returns null if unknown.
+ */
+export const getCurrentUserId = async (): Promise<string | null> => {
+  try {
+    const raw = await SecureStore.getItemAsync(USER_KEY);
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Build a user-scoped storage key: `<base>_<userId>` (mirrors desktop's
+ * `ck_downloads_<userId>` pattern). Falls back to the plain base key when no
+ * user is known (e.g. before login) — never crashes.
+ */
+export const userScopedKey = async (base: string): Promise<string> => {
+  const id = await getCurrentUserId();
+  return id ? `${base}_${id}` : base;
+};
 export const REMEMBER_ME_KEY = 'ck_remember_me_expiry';
 export const SESSION_KEY = 'ck_session_expiry';
 

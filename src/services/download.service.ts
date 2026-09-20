@@ -1,11 +1,36 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { mediaApi } from '@/api';
-import { StorageService } from './storage.service';
+import { StorageService, userScopedKey, getCurrentUserId } from './storage.service';
 import { presentLocalNotification } from './notification.service';
 
-const DOWNLOADS_KEY = 'ck_downloads';
-const DOWNLOAD_EXPIRY_NOTIFIED_KEY = 'ck_download_expiry_notified'; // de-dupe set
+const DOWNLOADS_BASE = 'ck_downloads';
+const DOWNLOAD_EXPIRY_NOTIFIED_BASE = 'ck_download_expiry_notified'; // de-dupe set
 const EXPIRY_WARN_DAYS = 3; // notify when <= 3 days left
+
+// Per-user storage keys (mirrors desktop `ck_downloads_<userId>`) so different
+// users on the same device never see each other's downloads. A one-time
+// migration moves any legacy global `ck_downloads` into the current user's key.
+let _migratedForUser: string | null = null;
+async function downloadsKey(): Promise<string> {
+  const key = await userScopedKey(DOWNLOADS_BASE);
+  // One-time: if the scoped key is empty but a legacy global key has data, move it.
+  const userId = await getCurrentUserId();
+  if (userId && _migratedForUser !== userId && key !== DOWNLOADS_BASE) {
+    _migratedForUser = userId;
+    const scoped = await StorageService.getObject<DownloadItem[]>(key);
+    if (!scoped) {
+      const legacy = await StorageService.getObject<DownloadItem[]>(DOWNLOADS_BASE);
+      if (legacy && legacy.length > 0) {
+        await StorageService.setObject(key, legacy);
+        await StorageService.delete(DOWNLOADS_BASE);
+      }
+    }
+  }
+  return key;
+}
+async function notifiedKey(): Promise<string> {
+  return userScopedKey(DOWNLOAD_EXPIRY_NOTIFIED_BASE);
+}
 
 export interface DownloadItem {
   id: string; // lessonId + type
@@ -94,19 +119,19 @@ export const DownloadService = {
       quality: type === 'video' ? (quality || 'Original') : undefined,
     };
 
-    // 7. Save to storage
+    // 7. Save to storage (user-scoped)
     const existing = await DownloadService.getAll();
     const filtered = existing.filter((d) => d.id !== item.id); // Replace if exists
-    await StorageService.setObject(DOWNLOADS_KEY, [...filtered, item]);
+    await StorageService.setObject(await downloadsKey(), [...filtered, item]);
 
     return item;
   },
 
   /**
-   * Get all downloaded items
+   * Get all downloaded items (for the current user)
    */
   getAll: async (): Promise<DownloadItem[]> => {
-    const items = await StorageService.getObject<DownloadItem[]>(DOWNLOADS_KEY);
+    const items = await StorageService.getObject<DownloadItem[]>(await downloadsKey());
     return items ?? [];
   },
 
@@ -145,7 +170,7 @@ export const DownloadService = {
       } catch {}
     }
     const filtered = items.filter((d) => d.id !== id);
-    await StorageService.setObject(DOWNLOADS_KEY, filtered);
+    await StorageService.setObject(await downloadsKey(), filtered);
   },
 
   /**
@@ -180,9 +205,10 @@ export const DownloadService = {
       const items = await DownloadService.getAll();
       if (items.length === 0) return;
 
-      // Load already-notified set
+      // Load already-notified set (user-scoped)
+      const notifKey = await notifiedKey();
       const notified =
-        (await StorageService.getObject<string[]>(DOWNLOAD_EXPIRY_NOTIFIED_KEY)) ?? [];
+        (await StorageService.getObject<string[]>(notifKey)) ?? [];
       const notifiedSet = new Set(notified);
 
       // Find downloads expiring soon and not yet warned
@@ -196,7 +222,7 @@ export const DownloadService = {
         const liveIds = new Set(items.map((d) => d.id));
         const cleaned = notified.filter((id) => liveIds.has(id));
         if (cleaned.length !== notified.length) {
-          await StorageService.setObject(DOWNLOAD_EXPIRY_NOTIFIED_KEY, cleaned);
+          await StorageService.setObject(notifKey, cleaned);
         }
         return;
       }
@@ -221,7 +247,7 @@ export const DownloadService = {
 
       // Mark these as notified so we don't repeat
       const updated = Array.from(new Set([...notified, ...expiringSoon.map((d) => d.id)]));
-      await StorageService.setObject(DOWNLOAD_EXPIRY_NOTIFIED_KEY, updated);
+      await StorageService.setObject(notifKey, updated);
     } catch {
       // Silent — never crash on notification logic
     }
@@ -247,6 +273,6 @@ export const DownloadService = {
       }
     }
 
-    await StorageService.setObject(DOWNLOADS_KEY, valid);
+    await StorageService.setObject(await downloadsKey(), valid);
   },
 };

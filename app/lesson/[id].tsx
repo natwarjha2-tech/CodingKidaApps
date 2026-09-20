@@ -6,17 +6,17 @@ import { useQueryClient, useQuery } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useCourseStore, useAuthStore } from '@/store';
 import { useQuiz, useExercise, useHomework, useCoins } from '@/hooks';
-import { quizApi, exerciseApi, progressApi, weeklyStreakApi, aiMentorApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, type LessonReviewsData } from '@/api';
+import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, type LessonReviewsData } from '@/api';
 import { StorageService, DownloadService, XPService, XP_REWARDS } from '@/services';
+import { userScopedKey } from '@/services/storage.service';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { CoinRewardToast } from '@/components/common/CoinRewardToast';
+import { getWatchlist, setWatchlist } from '@/utils/watchlist.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
-type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'rate' | 'ai';
-
-const WATCHLIST_KEY = 'ck_watchlist';
+type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'rate';
 
 export default function LessonScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -76,10 +76,6 @@ export default function LessonScreen() {
   const totalCoins = coinsData?.totalCoins ?? 0;
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
 
-  // AI Mentor
-  const [aiQuestion, setAiQuestion] = useState('');
-  const [aiAnswer, setAiAnswer] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
   // Track keyboard visibility — collapse video when keyboard is open (like YouTube)
@@ -107,9 +103,9 @@ export default function LessonScreen() {
     if (lessonId) {
       DownloadService.isDownloaded(lessonId, 'video').then(setVideoDownloaded);
       DownloadService.isDownloaded(lessonId, 'pdf').then(setPdfDownloaded);
-      // Check watchlist
-      StorageService.getObject<any[]>(WATCHLIST_KEY).then((items) => {
-        setSavedToWatchlist((items ?? []).some((i) => i.lessonId === lessonId));
+      // Check watchlist (user-scoped)
+      getWatchlist().then((items) => {
+        setSavedToWatchlist(items.some((i) => i.lessonId === lessonId));
       });
     }
   }, [lessonId]);
@@ -118,14 +114,17 @@ export default function LessonScreen() {
   const { data: exerciseData } = useExercise(lessonId);
   const { data: homeworkData } = useHomework(lessonId);
 
-  // Check if quiz was previously attempted for this lesson
+  // Check if quiz was previously attempted for this lesson (user-scoped key so
+  // different users on the same device don't share attempted/completed state).
   useEffect(() => {
     if (lessonId) {
-      StorageService.getObject<string[]>('ck_quiz_attempted_lessons').then((attempted) => {
-        if (attempted && attempted.includes(lessonId)) {
-          setQuizAttemptedBefore(true);
-        }
-      });
+      userScopedKey('ck_quiz_attempted_lessons').then((key) =>
+        StorageService.getObject<string[]>(key).then((attempted) => {
+          if (attempted && attempted.includes(lessonId)) {
+            setQuizAttemptedBefore(true);
+          }
+        })
+      );
     }
   }, [lessonId]);
 
@@ -249,7 +248,9 @@ export default function LessonScreen() {
         setRateMessage({ text: '🎉 Thank you! Your rating has been submitted.', success: true });
         setRateFeedback('');
         setLessonRating(0);
-        loadLessonReviews(); // refresh reviews list
+        // Refresh the reviews list in the background — do NOT await, so the
+        // success message shows instantly (the reviews query can be slow).
+        void loadLessonReviews();
       } else {
         setRateMessage({ text: `❌ ${data?.message || 'Failed'}`, success: false });
       }
@@ -260,9 +261,9 @@ export default function LessonScreen() {
     }
   }, [lessonRating, rateFeedback, lessonId, activeLesson?.title, loadLessonReviews]);
 
-  // Save to Watchlist
+  // Save to Watchlist (user-scoped)
   const saveToWatchlist = async () => {
-    const existing = await StorageService.getObject<any[]>(WATCHLIST_KEY) ?? [];
+    const existing = await getWatchlist();
     const alreadySaved = existing.some(item => item.lessonId === lessonId);
     if (alreadySaved) {
       Alert.alert('Already Saved', 'This lesson is already in your watchlist.');
@@ -276,7 +277,7 @@ export default function LessonScreen() {
       courseTitle: lessonContext?.courseTitle ?? '',
       savedAt: new Date().toISOString(),
     };
-    await StorageService.setObject(WATCHLIST_KEY, [...existing, newItem]);
+    await setWatchlist([...existing, newItem]);
     setSavedToWatchlist(true);
     Alert.alert('Saved!', 'Lesson added to your watchlist.');
   };
@@ -310,20 +311,6 @@ export default function LessonScreen() {
       Alert.alert('Success! ✅', `Video downloaded for offline viewing (${selectedQuality}, 30 days).`);
     } catch (err: any) {
       Alert.alert('Download Failed', err?.message || 'Please check your internet and try again.');
-    }
-  };
-
-  // AI Mentor
-  const askAi = async () => {
-    if (!aiQuestion.trim()) return;
-    setAiLoading(true);
-    try {
-      const res = await aiMentorApi.ask(aiQuestion, lessonId, 'lesson');
-      setAiAnswer(res.answer ?? 'No response.');
-    } catch {
-      setAiAnswer('AI is busy. Please try again.');
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -380,12 +367,13 @@ export default function LessonScreen() {
       setQuizCompleted(true);
       // Award XP for completing the quiz (once per lesson quiz)
       XPService.awardXP(`quiz-complete:${lessonId}`, XP_REWARDS.quizComplete);
-      // Mark lesson quiz as attempted (prevents future coin rewards)
+      // Mark lesson quiz as attempted (prevents future coin rewards) — user-scoped
       if (!quizAttemptedBefore) {
-        const attempted = await StorageService.getObject<string[]>('ck_quiz_attempted_lessons') ?? [];
+        const key = await userScopedKey('ck_quiz_attempted_lessons');
+        const attempted = await StorageService.getObject<string[]>(key) ?? [];
         if (!attempted.includes(lessonId)) {
           attempted.push(lessonId);
-          await StorageService.setObject('ck_quiz_attempted_lessons', attempted);
+          await StorageService.setObject(key, attempted);
         }
       }
     }
@@ -477,7 +465,6 @@ export default function LessonScreen() {
     { key: 'homework', label: '📝 Homework' },
     ...(streak ? [{ key: 'streak' as Tab, label: '🔥 Streak' }] : []),
     { key: 'rate', label: '⭐ Rate' },
-    { key: 'ai', label: '🤖 AI' },
   ];
 
   return (
@@ -554,19 +541,27 @@ export default function LessonScreen() {
       </View>
       )}
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        {TABS.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, activeTab === tab.key && styles.tabActive]}
-            onPress={() => setActiveTab(tab.key)}
-          >
-            <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      {/* Tabs — single horizontal line, equal gap, no wrap (each tab sizes to
+          its label; scrolls horizontally if they don't all fit the screen). */}
+      <View style={styles.tabsWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabs}
+        >
+          {TABS.map((tab) => (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.tab, activeTab === tab.key && styles.tabActive]}
+              onPress={() => setActiveTab(tab.key)}
+              activeOpacity={0.7}
+            >
+              <Text numberOfLines={1} style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
       {/* Tab Content */}
@@ -928,36 +923,7 @@ export default function LessonScreen() {
           </View>
         )}
 
-        {/* AI Mentor Tab */}
-        {activeTab === 'ai' && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>🤖 AI Mentor</Text>
-            <View style={styles.aiInputRow}>
-              <TextInput
-                style={styles.aiInput}
-                placeholder="Ask anything about this lesson"
-                placeholderTextColor={Colors.muted}
-                value={aiQuestion}
-                onChangeText={setAiQuestion}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={[styles.aiSendBtn, (!aiQuestion.trim() || aiLoading) && styles.submitBtnDisabled]}
-                onPress={askAi}
-                disabled={!aiQuestion.trim() || aiLoading}
-              >
-                <Text style={styles.aiSendText}>{aiLoading ? '...' : 'Ask'}</Text>
-              </TouchableOpacity>
-            </View>
-            {aiAnswer ? (
-              <View style={styles.aiAnswer}>
-                <Text style={styles.aiAnswerText}>{aiAnswer}</Text>
-              </View>
-            ) : null}
-          </View>
-        )}
-
-        <View style={{ height: activeTab === 'ai' ? 300 : Spacing.xxxl }} />
+        <View style={{ height: Spacing.xxxl }} />
       </ScrollView>
 
       {/* Coin reward toast (after quiz coins awarded) */}
@@ -1057,13 +1023,16 @@ const styles = StyleSheet.create({
   exRankLabel: { color: '#fff', fontSize: 13, fontWeight: '700' },
   exRankValue: { color: Colors.success, fontSize: 26, fontWeight: '800', marginVertical: 4 },
   exRankMeta: { color: Colors.muted, fontSize: 12 },
-  tabs: {
-    flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: Colors.border,
-    backgroundColor: Colors.cardAlt, paddingHorizontal: 4,
+  tabsWrap: {
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+    backgroundColor: Colors.cardAlt,
   },
-  tab: { flex: 1, paddingVertical: Spacing.md, alignItems: 'center', justifyContent: 'center', minWidth: 50 },
+  // Row of tabs with equal spacing on a single line. Each tab sizes to its
+  // label (no flex:1 / minWidth), so the emoji+text never wraps to two lines.
+  tabs: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 },
+  tab: { paddingVertical: Spacing.md, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
   tabActive: { borderBottomWidth: 2, borderBottomColor: Colors.primary },
-  tabText: { color: Colors.muted, fontSize: 10, fontWeight: FontWeight.medium, textAlign: 'center' },
+  tabText: { color: Colors.muted, fontSize: 12, fontWeight: FontWeight.medium, textAlign: 'center' },
   tabTextActive: { color: Colors.primary, fontWeight: FontWeight.bold },
   tabContent: { flex: 1 },
   card: {
@@ -1133,13 +1102,4 @@ const styles = StyleSheet.create({
   },
   pdfBtnText: { color: Colors.primary, fontSize: Typography.sm, fontWeight: FontWeight.bold },
   pdfBtnTextDownload: { color: Colors.success },
-  aiInputRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  aiInput: {
-    flex: 1, backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md, padding: Spacing.md, color: Colors.white, fontSize: Typography.sm,
-  },
-  aiSendBtn: { backgroundColor: Colors.primary, borderRadius: Radius.md, paddingHorizontal: 16, justifyContent: 'center' },
-  aiSendText: { color: '#fff', fontWeight: FontWeight.bold, fontSize: Typography.sm },
-  aiAnswer: { backgroundColor: Colors.card, borderRadius: Radius.md, padding: Spacing.md, marginTop: 12, borderWidth: 1, borderColor: Colors.border },
-  aiAnswerText: { color: Colors.text, fontSize: Typography.sm, lineHeight: 22 },
 });

@@ -2,6 +2,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'rea
 import { useQuery } from '@tanstack/react-query';
 import { coinsApi } from '@/api';
 import { useAuthStore } from '@/store';
+import { formatCoinTx } from '@/utils/coinTx.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 interface CoinsModalProps {
@@ -60,20 +61,26 @@ export function CoinsModal({ visible, onClose }: CoinsModalProps) {
             {transactions.length === 0 ? (
               <Text style={styles.emptyText}>No rewards yet. Complete quizzes to earn coins!</Text>
             ) : (
-              transactions.map((tx, i) => (
-                <View key={i} style={styles.txItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.txReason}>{tx.reason}</Text>
+              transactions.map((tx, i) => {
+                const disp = formatCoinTx(tx);
+                return (
+                  <View key={i} style={styles.txItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.txReason} numberOfLines={2}>{disp.title}</Text>
+                      {disp.subtitle ? (
+                        <Text style={styles.txSub} numberOfLines={2}>{disp.subtitle}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={[
+                      styles.txCoins,
+                      { color: tx.type === 'EARNED' ? Colors.success : Colors.danger },
+                    ]}>
+                      {tx.type === 'EARNED' ? '+' : '-'}{tx.coins}
+                    </Text>
+                    <Text style={styles.txTime}>{formatDate(tx.createdAt)}</Text>
                   </View>
-                  <Text style={[
-                    styles.txCoins,
-                    { color: tx.type === 'EARNED' ? Colors.success : Colors.danger },
-                  ]}>
-                    {tx.type === 'EARNED' ? '+' : '-'}{tx.coins}
-                  </Text>
-                  <Text style={styles.txTime}>{formatDate(tx.createdAt)}</Text>
-                </View>
-              ))
+                );
+              })
             )}
           </ScrollView>
 
@@ -158,7 +165,7 @@ const styles = StyleSheet.create({
   },
   txItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.04)',
@@ -167,6 +174,13 @@ const styles = StyleSheet.create({
   txReason: {
     color: Colors.text,
     fontSize: Typography.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  txSub: {
+    color: Colors.muted,
+    fontSize: Typography.xs,
+    marginTop: 2,
+    lineHeight: 15,
   },
   txCoins: {
     fontSize: Typography.sm,

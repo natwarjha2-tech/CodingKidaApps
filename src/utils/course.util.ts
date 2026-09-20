@@ -69,6 +69,26 @@ export function courseStudents(c: Course | CourseDetail): number {
 }
 
 /**
+ * Resolve a course's real (feedback-based) rating for the detail-page hero.
+ *
+ * The /api/courses LIST route already computes the real rating (average of
+ * each lesson's feedback averages). The /api/courses/[id] DETAIL route does
+ * NOT — it returns the raw stored course.rating (usually 0). So we reuse the
+ * list route's already-computed rating (matched by id) as the source of truth,
+ * falling back to the detail course.rating. Returns 0 when there is genuinely
+ * no rating (caller shows "—"). No fabrication, no extra network requests.
+ */
+export function courseRating(
+  detail: Course | CourseDetail,
+  listCourses?: Course[] | null
+): number {
+  const fromList = listCourses?.find((c) => c.id === detail.id)?.rating;
+  if (typeof fromList === 'number' && fromList > 0) return fromList;
+  if (typeof detail.rating === 'number' && detail.rating > 0) return detail.rating;
+  return 0;
+}
+
+/**
  * Real total duration in SECONDS for a course. Prefers the backend-computed
  * totalDurationSeconds (list route), else sums the per-lesson durations from
  * the detail modules (mirrors the desktop course-detail hero). No fabrication.

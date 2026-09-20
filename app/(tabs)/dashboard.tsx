@@ -2,15 +2,17 @@ import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ImageBackground, Image, Animated } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store';
 import { useCourseStore } from '@/store';
-import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll } from '@/hooks';
+import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll, usePrefetchNotifications } from '@/hooks';
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
 import { getUnreadCount } from '@/services/notification.service';
+import { getLastLesson, type LastLesson } from '@/utils/lastLesson.util';
+import { coursesApi } from '@/api';
 
 // Real subject logos (transparent PNGs in assets/logos). Loaded safely — a
 // missing file falls back to the emoji tile below, never crashes.
@@ -46,15 +48,28 @@ export default function DashboardScreen() {
   const { data: allCoursesData } = useCourses('All', '');
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
+  const queryClient = useQueryClient();
   const lessonContext = useCourseStore((s) => s.lessonContext);
+  const setActiveLesson = useCourseStore((s) => s.setActiveLesson);
+  const setActiveCourse = useCourseStore((s) => s.setActiveCourse);
+  // Persisted last lesson (survives app restart, 15-day window) — used as a
+  // fallback when the in-memory lessonContext is gone.
+  const [persistedLesson, setPersistedLesson] = useState<LastLesson | null>(null);
 
   // Prefetch leaderboard, achievements & streak so child screens open instantly
   usePrefetchDashboard();
+  // Prefetch notifications so the Notifications page opens instantly (no spinner)
+  usePrefetchNotifications();
 
   // Fetch unread notification count
   useEffect(() => {
     getUnreadCount().then(setNotifUnread).catch(() => {});
   }, []);
+
+  // Load the persisted last-lesson (only needed when there's no in-memory context)
+  useEffect(() => {
+    if (!lessonContext) getLastLesson().then(setPersistedLesson).catch(() => {});
+  }, [lessonContext]);
 
   // ── Unified "refresh entire app" (same behaviour everywhere): invalidate ALL
   // queries → whole app refetches fresh from server, bypassing staleTime. ──
@@ -73,6 +88,22 @@ export default function DashboardScreen() {
 
   // Videos/lessons completed count (sum across enrolled courses — same as completed-videos screen)
   const videosCompleted = (data?.enrolledCourses ?? []).reduce((sum: number, c: any) => sum + (c.completedLessons ?? 0), 0);
+
+  // Continue-Learning source priority (all user-specific):
+  //   1. in-memory lessonContext (current session)
+  //   2. persisted last lesson (survives restart, valid 15 days)
+  //   3. API lastWatched (server fallback)
+  const resumeSource = lessonContext ?? persistedLesson;
+  const resumeData = resumeSource
+    ? {
+        courseId: resumeSource.courseId,
+        courseTitle: resumeSource.courseTitle,
+        moduleTitle: resumeSource.moduleTitle,
+        lessonId: resumeSource.lessonId,
+        lessonTitle: resumeSource.lessonTitle,
+        progressPercent: data?.lastWatched?.progressPercent ?? 0,
+      }
+    : data?.lastWatched ?? null;
 
   // Continue Learning enrichment (mirrors desktop): language chip, difficulty, XP, progress text, time-left
   const resumePct = resumeData?.progressPercent ?? 0;
@@ -141,17 +172,41 @@ export default function DashboardScreen() {
     pro: '🥉',
   };
 
-  // Use lessonContext (latest opened lesson) if available, else fall back to API lastWatched
-  const resumeData = lessonContext
-    ? {
-        courseId: lessonContext.courseId,
-        courseTitle: lessonContext.courseTitle,
-        moduleTitle: lessonContext.moduleTitle,
-        lessonId: lessonContext.lessonId,
-        lessonTitle: lessonContext.lessonTitle,
-        progressPercent: data?.lastWatched?.progressPercent ?? 0,
+  // Open the Continue-Learning target. If the in-memory lesson context is set
+  // (current session), the lesson screen already has the active lesson → open
+  // directly. Otherwise (persisted / API source) resolve the lesson from the
+  // (prefetched) course detail, set it active so the video plays, then open.
+  const openContinueLearning = async () => {
+    if (!resumeData) return;
+    if (lessonContext && resumeData.lessonId) {
+      router.push(`/lesson/${resumeData.lessonId}`);
+      return;
+    }
+    const { courseId, lessonId } = resumeData;
+    if (!lessonId || !courseId) {
+      if (courseId) router.push(`/course/${courseId}`);
+      return;
+    }
+    try {
+      const res = await queryClient.fetchQuery({
+        queryKey: ['course', courseId],
+        queryFn: () => coursesApi.getById(courseId),
+        staleTime: 1000 * 60 * 2,
+      });
+      const course = res?.course;
+      const mod = course?.modules?.find((m) => m.lessons?.some((l) => l.id === lessonId));
+      const lesson = mod?.lessons?.find((l) => l.id === lessonId);
+      if (course && mod && lesson) {
+        setActiveCourse(course);
+        setActiveLesson(lesson, mod, course.id, course.title);
+        router.push(`/lesson/${lessonId}`);
+      } else {
+        router.push(`/course/${courseId}`);
       }
-    : data?.lastWatched ?? null;
+    } catch {
+      router.push(`/course/${courseId}`);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -226,11 +281,6 @@ export default function DashboardScreen() {
               <Text style={styles.welcomeSubtitle}>Keep learning,</Text>
               <Text style={styles.welcomeSubtitle}>keep growing.</Text>
             </View>
-
-            {/* Continue Learning — pinned to the card's bottom-left */}
-            <TouchableOpacity style={styles.continueBtn} onPress={() => router.push('/(tabs)/courses')} activeOpacity={0.9}>
-              <Text style={styles.continueBtnText}>Continue Learning  →</Text>
-            </TouchableOpacity>
           </ImageBackground>
         </View>
 
@@ -282,13 +332,7 @@ export default function DashboardScreen() {
             </View>
             <TouchableOpacity
               style={styles.continueCard}
-              onPress={() => {
-                if (resumeData.lessonId) {
-                  router.push(`/lesson/${resumeData.lessonId}`);
-                } else {
-                  router.push(`/course/${resumeData.courseId}`);
-                }
-              }}
+              onPress={openContinueLearning}
             >
               <View style={styles.continueThumbnail}>
                 <Text style={styles.continueThumbnailIcon}>▶</Text>

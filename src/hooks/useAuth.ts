@@ -107,12 +107,15 @@ export const useAuth = () => {
     // Deactivate device push token + clear notification sync state (non-blocking)
     deregisterDevice().catch(() => {});
     clearNotifState().catch(() => {});
-    // Keep query cache on disk — will be restored if same user logs back in
-    // Only clear in-memory cache (components will re-render from disk on next login)
+    // Clear ALL cached queries on logout so the next user (on the same device)
+    // never sees the previous user's coins / achievements / progress. Prevents
+    // the "rewards without attempting" illusion. Backend awards are unaffected.
+    queryClient.clear();
+    await AsyncStorage.removeItem('ck_qcache_last_user');
     await AuthService.logout();
     clearAuth();
     router.replace('/(auth)/login');
-  }, [clearAuth]);
+  }, [clearAuth, queryClient]);
 
   return { token, user, isAuthenticated, isLoading, login, loginWithOtp, signup, logout };
 };

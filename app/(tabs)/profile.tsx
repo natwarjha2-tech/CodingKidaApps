@@ -10,6 +10,7 @@ import { useAuthStore } from '@/store';
 import { StorageService, USER_KEY } from '@/services/storage.service';
 import { Colors } from '@/theme';
 import { apiClient, studentApi, achievementsApi } from '@/api';
+import { CoinsModal } from '@/components/common/CoinsModal';
 import type { Achievement } from '@/types';
 
 // Subject thumbnail for enrolled-course rows (real desktop images; emoji fallback)
@@ -52,6 +53,7 @@ export default function ProfileScreen() {
   // Real backend data for top bar + weekly streak tile
   const { data: coinsData } = useCoins();
   const totalCoins = coinsData?.totalCoins ?? 0;
+  const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const { data: weeklyStreak } = useWeeklyStreakCount();
   const { refreshAll, refreshing, spin } = useRefreshAll();
 
@@ -274,11 +276,13 @@ export default function ProfileScreen() {
           <Text style={styles.tagline}>Learn  •  Practice  •  Grow</Text>
         </View>
         <View style={styles.topActions}>
-          <View style={styles.coinPill}><Text style={styles.coinTxt}>🪙 {totalCoins}</Text></View>
+          <TouchableOpacity style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7} accessibilityLabel="Coins">
+            <Text style={styles.coinTxt}>🪙 {totalCoins}</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={refreshAll} disabled={refreshing} activeOpacity={0.7}>
             <Animated.Text style={{ transform: [{ rotate: spin }] }}>🔄</Animated.Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7}><Text>🔔</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications"><Text>🔔</Text></TouchableOpacity>
         </View>
       </View>
 
@@ -288,7 +292,6 @@ export default function ProfileScreen() {
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.pageTitle}>My Profile</Text>
-            <Text style={styles.pageSubtitle}>Manage your account, track progress, and view achievements.</Text>
           </View>
           <View style={styles.klPill}><Text style={styles.klText}>Keep Learning{'\n'}Keep Growing 🚀</Text></View>
         </View>
@@ -327,10 +330,11 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
           </View>
-          {/* Joined box — only when backend provides the date (never fabricated) */}
+          {/* Joined box — only when backend provides the date (never fabricated).
+              Uses 🎓 (not the 📅 emoji, whose artwork always shows "Jul 17"). */}
           {joinedDate && (
             <View style={styles.joinedBox}>
-              <Text style={styles.joinedIcon}>📅</Text>
+              <Text style={styles.joinedIcon}>🎓</Text>
               <Text style={styles.joinedLabel}>Joined</Text>
               <Text style={styles.joinedVal}>{joinedDate}</Text>
             </View>
@@ -371,7 +375,9 @@ export default function ProfileScreen() {
           </View>
           <View style={[styles.tile, { backgroundColor: L.amberSoft }]}>
             <Text style={styles.tileEmoji}>🏆</Text>
-            <Text style={[styles.tileVal, { color: L.amber }]}>{xp.unlockedCount}</Text>
+            {/* Real earned badges from the backend achievements (same source as
+                the Achievements section below), not the local XP gamification. */}
+            <Text style={[styles.tileVal, { color: L.amber }]}>{achievements.length}</Text>
             <Text style={styles.tileLabel}>Badges</Text>
           </View>
           <View style={[styles.tile, { backgroundColor: L.pinkSoft }]}>
@@ -516,6 +522,9 @@ export default function ProfileScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Coins Modal — same shared modal as Dashboard (consistent behaviour) */}
+      <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
     </SafeAreaView>
   );
 }

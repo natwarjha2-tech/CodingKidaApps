@@ -17,12 +17,18 @@ function openEmail() {
   const body = 'Hi CodingKida Support,\n\nI need help with:\n\n[Describe your issue here]\n\nThank you';
   Linking.openURL(`mailto:${SupportService.get().email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`).catch(() => {});
 }
+// Open the phone dialer with the support number pre-filled (dial-ready). Uses
+// the same live support number as WhatsApp; does NOT open WhatsApp.
+function openPhone() {
+  const number = SupportService.get().whatsapp;
+  Linking.openURL(`tel:${number}`).catch(() => {});
+}
 
 interface FAQItem { question: string; answer: string }
 
 const faqItems: FAQItem[] = [
   { question: 'How do I enroll in a course?', answer: 'Go to Courses tab, select a course, and tap Enroll.' },
-  { question: 'How do I earn coins?', answer: 'Complete quizzes and rank in the top 3 to earn coins.' },
+  { question: 'How do I earn coins?', answer: 'You earn coins in several ways:\n\n🧠 Lesson quizzes (by rank):\n• Rank #1 → 10 coins + Super Master badge\n• Rank #2 → 7 coins + Master badge\n• Rank #3–10 → 5 coins + Pro badge\n(Coins are given once per lesson, on your first attempt.)\n\n🔥 Weekly Challenge: 50 coins on completing all your weekly coding challenges.\n\n🎁 Refer & Earn: your friend gets 50 coins when they apply your referral code, and you get 50 coins when they buy their first course.\n\n💡 Redeem: 100+ coins = a ₹ discount on your next course.' },
   { question: 'Can I download lessons for offline use?', answer: 'Yes — open a lesson and tap Download. Downloads expire after 30 days.' },
   { question: 'How do I track my progress?', answer: 'Open My Report or Student Progress from your Profile to see detailed progress.' },
   { question: 'What are achievements?', answer: 'Rank Super-Master, Master, or Pro in quizzes to earn achievement badges.' },
@@ -139,12 +145,13 @@ export default function HelpSupportScreen() {
             <Text style={[styles.contactCta, { color: '#60A5FA' }]}>Contact Support →</Text>
           </TouchableOpacity>
 
-          {/* Available 24/7 */}
-          <TouchableOpacity style={[styles.contactCard, { borderColor: 'rgba(168,85,247,0.25)' }]} onPress={() => openWhatsApp()} activeOpacity={0.85}>
+          {/* Available 24/7 — taps open the phone dialer (dial-ready), not WhatsApp */}
+          <TouchableOpacity style={[styles.contactCard, { borderColor: 'rgba(168,85,247,0.25)' }]} onPress={openPhone} activeOpacity={0.85}>
             <View style={[styles.contactIcon, { backgroundColor: 'rgba(168,85,247,0.12)' }]}><Text style={{ fontSize: 16 }}>🕐</Text></View>
             <Text style={[styles.contactTitle, { color: '#A855F7' }]}>Available 24/7</Text>
             <Text style={styles.contactMeta}>Monday – Sunday</Text>
             <Text style={[styles.contactValue, { color: '#A855F7' }]}>{support.whatsappPretty}</Text>
+            <Text style={[styles.contactCta, { color: '#A855F7' }]}>Call now →</Text>
           </TouchableOpacity>
         </View>
 

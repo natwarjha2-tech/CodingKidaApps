@@ -68,8 +68,9 @@ export default function AchievementsScreen() {
                 <Text style={styles.achievementTitle}>{achievement.title}</Text>
                 {achievement.courseTitle && (
                   <Text style={styles.achievementMeta}>
-                    {achievement.courseTitle}
-                    {achievement.lessonTitle ? ` · ${achievement.lessonTitle}` : ''}
+                    {[achievement.courseTitle, achievement.moduleTitle, achievement.lessonTitle]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </Text>
                 )}
                 <View style={styles.statsRow}>

@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as ScreenCapture from 'expo-screen-capture';
 import { mediaApi } from '@/api';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
@@ -30,11 +29,20 @@ export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
   const webRef = useRef<WebView>(null);
 
   // Block screenshots / screen recording while a PDF is open; restore on close.
+  // Loaded lazily + guarded so a dev/build where the ExpoScreenCapture native
+  // module isn't linked yet won't crash the whole screen — the protection is
+  // simply skipped until the app is rebuilt with the native module included.
   useEffect(() => {
     if (!visible) return;
-    ScreenCapture.preventScreenCaptureAsync().catch(() => {});
+    let ScreenCapture: typeof import('expo-screen-capture') | null = null;
+    try {
+      ScreenCapture = require('expo-screen-capture');
+    } catch {
+      ScreenCapture = null;
+    }
+    ScreenCapture?.preventScreenCaptureAsync?.().catch(() => {});
     return () => {
-      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+      ScreenCapture?.allowScreenCaptureAsync?.().catch(() => {});
     };
   }, [visible]);
 
@@ -176,7 +184,7 @@ window.__renderPdf = function() {
           <TouchableOpacity onPress={() => { onClose(); setViewerContent(null); setError(null); localB64Ref.current = null; }}>
             <Text style={styles.closeBtn}>✕ Close</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>📄 PDF Notes</Text>
+          <Text style={styles.headerTitle}>📄 Document</Text>
           <View style={{ width: 60 }} />
         </View>
 

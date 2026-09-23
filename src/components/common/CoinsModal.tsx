@@ -23,11 +23,13 @@ export function CoinsModal({ visible, onClose }: CoinsModalProps) {
   const totalCoins = data?.totalCoins ?? 0;
   const transactions = data?.transactions ?? [];
 
+  // Show date + time (not just time) so users know WHEN a coin was credited.
+  // e.g. "12 Sep, 12:30 PM"
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
-    const h = d.getHours().toString().padStart(2, '0');
-    const m = d.getMinutes().toString().padStart(2, '0');
-    return `${h}:${m}`;
+    const date = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const time = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${date}, ${time}`;
   };
 
   return (
@@ -189,6 +191,8 @@ const styles = StyleSheet.create({
   txTime: {
     color: Colors.muted,
     fontSize: Typography.xs,
+    maxWidth: 92,
+    textAlign: 'right',
   },
   footer: {
     marginTop: Spacing.lg,

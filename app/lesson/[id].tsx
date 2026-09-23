@@ -6,7 +6,7 @@ import { useQueryClient, useQuery } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useCourseStore, useAuthStore } from '@/store';
 import { useQuiz, useExercise, useHomework, useCoins } from '@/hooks';
-import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, type LessonReviewsData } from '@/api';
+import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, coursesApi, type LessonReviewsData } from '@/api';
 import { StorageService, DownloadService, XPService, XP_REWARDS } from '@/services';
 import { userScopedKey } from '@/services/storage.service';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
@@ -18,9 +18,16 @@ import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'rate';
 
+// In-memory cache of the signed "play" data per lesson (45-min TTL). Presigned
+// S3 URLs are valid 60 min, so reusing within 45 min avoids a re-sign call and
+// replays instantly. Module-scoped so it survives screen re-mounts in a session.
+type PlayData = { videoUrl: string; qualityUrls: Record<string, string>; hlsQualities: string[]; notes?: string };
+const _playCache: Record<string, { at: number; data: PlayData }> = {};
+
 export default function LessonScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeLesson, activeModule, lessonContext } = useCourseStore();
+  const { activeCourse, activeLesson, activeModule, lessonContext } = useCourseStore();
+  const setActiveLesson = useCourseStore((s) => s.setActiveLesson);
   const xpUserId = useAuthStore((s) => s.user?.id);
   const [activeTab, setActiveTab] = useState<Tab>('notes');
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -88,6 +95,20 @@ export default function LessonScreen() {
 
   // PDF Viewer
   const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
+  // The URL currently shown in the PDF viewer. Defaults to the lesson notes, but
+  // a study-material row can open its own signed URL here before showing.
+  const [pdfViewerUrl, setPdfViewerUrl] = useState<string | null>(null);
+
+  // Module notes file — comes from the course response (materials are signed
+  // up front by the backend). Under Notes we show the SINGLE module file whose
+  // title/filename ends with the literal text "ppt" (naming convention marking
+  // "this is the lesson notes to show"), e.g. "Module4-ppt.pdf".
+  const notesMaterial = (() => {
+    const mats = activeModule?.materials ?? [];
+    const endsWithPpt = (s?: string) =>
+      /ppt$/i.test((s || '').replace(/\.[^.]+$/, '').trim());
+    return mats.find((m) => endsWithPpt(m.title)) ?? null;
+  })();
 
   // Download status
   const [videoDownloaded, setVideoDownloaded] = useState(false);
@@ -97,6 +118,112 @@ export default function LessonScreen() {
   // Selected video quality (from the player) — download uses exactly this quality.
   const [selectedQuality, setSelectedQuality] = useState('Original');
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+
+  // "Sign on play": the course response no longer carries signed video/quality
+  // URLs (signed on demand to keep course-open fast). Fetch this lesson's signed
+  // playable data when the screen opens, and use it for the player.
+  const [playData, setPlayData] = useState<PlayData | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!lessonId) { setPlayData(null); return; }
+
+    // 45-min cache: presigned S3 URLs are valid 60 min, so reusing within 45 min
+    // is safe (15-min buffer) and lets re-opening the same lesson replay instantly
+    // without another signing call. NEVER cache beyond the URL's 60-min lifetime.
+    const cached = _playCache[lessonId];
+    if (cached && Date.now() - cached.at < 45 * 60 * 1000) {
+      setPlayData(cached.data);
+      return;
+    }
+
+    setPlayData(null);
+    coursesApi
+      .getLessonPlay(lessonId)
+      .then((res) => {
+        if (cancelled || !res?.success || !res.lesson) return;
+        const data = {
+          videoUrl: res.lesson.videoUrl || '',
+          qualityUrls: res.lesson.qualityUrls || {},
+          hlsQualities: res.lesson.hlsQualities || [],
+          notes: res.lesson.notes,
+        };
+        _playCache[lessonId] = { at: Date.now(), data };
+        setPlayData(data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [lessonId]);
+
+  // Prefetch the NEXT lesson's signed play URL into the cache once THIS lesson's
+  // play data has loaded — so hitting "Next" opens instantly. Uses the WHOLE
+  // course sequence (activeCourse.modules flattened) so it also prefetches the
+  // next module's first lesson when the current one is a module's last lesson.
+  // Only the tiny signed URL (never the video bytes), only if not already warm.
+  // Fires ~4s after play data lands so it never competes with the current load.
+  useEffect(() => {
+    if (!playData) return;
+    // Build the course-wide ordered lesson sequence; fall back to the single
+    // active module if the full course isn't available.
+    const seq = (activeCourse?.modules?.length
+      ? activeCourse.modules.flatMap((m) => m.lessons ?? [])
+      : (activeModule?.lessons ?? []));
+    if (!seq.length) return;
+    const idx = seq.findIndex((l) => l.id === lessonId);
+    const next = idx >= 0 ? seq[idx + 1] : null;
+    if (!next) return;
+    const cached = _playCache[next.id];
+    if (cached && Date.now() - cached.at < 45 * 60 * 1000) return; // already warm
+    const t = setTimeout(() => {
+      coursesApi
+        .getLessonPlay(next.id)
+        .then((res) => {
+          if (!res?.success || !res.lesson) return;
+          _playCache[next.id] = {
+            at: Date.now(),
+            data: {
+              videoUrl: res.lesson.videoUrl || '',
+              qualityUrls: res.lesson.qualityUrls || {},
+              hlsQualities: res.lesson.hlsQualities || [],
+              notes: res.lesson.notes,
+            },
+          };
+        })
+        .catch(() => {});
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [playData, activeCourse, activeModule, lessonId]);
+
+  // Playable source: prefer the freshly-signed play data, fall back to whatever
+  // the lesson object had (keeps old cached content / free previews working).
+  const playVideoUrl = playData?.videoUrl || activeLesson?.videoUrl || '';
+  const playQualityUrls = (playData && Object.keys(playData.qualityUrls).length > 0)
+    ? playData.qualityUrls
+    : activeLesson?.qualityUrls;
+  const playHlsQualities = (playData && playData.hlsQualities.length > 0)
+    ? playData.hlsQualities
+    : activeLesson?.hlsQualities;
+
+  // ── Next lesson (continuous across modules) — for the "Next Lesson" button ──
+  // Build the course-wide ordered sequence and find the lesson right after this
+  // one, along with the module it belongs to (so we can set it active correctly).
+  const nextLessonInfo = (() => {
+    const mods = activeCourse?.modules ?? (activeModule ? [activeModule] : []);
+    if (!mods.length) return null;
+    const flat: { lesson: any; module: any }[] = [];
+    for (const m of mods) for (const l of (m.lessons ?? [])) flat.push({ lesson: l, module: m });
+    const idx = flat.findIndex((x) => x.lesson.id === lessonId);
+    if (idx < 0 || idx + 1 >= flat.length) return null; // last lesson of the course
+    return flat[idx + 1];
+  })();
+
+  const goToNextLesson = useCallback(() => {
+    if (!nextLessonInfo) return;
+    const { lesson, module } = nextLessonInfo;
+    // Set the next lesson active (so the reused screen has full context), then
+    // navigate. Its play URL was prefetched, so it opens near-instantly.
+    setActiveLesson(lesson, module, lessonContext?.courseId ?? '', lessonContext?.courseTitle ?? '');
+    router.push(`/lesson/${lesson.id}`);
+  }, [nextLessonInfo, setActiveLesson, lessonContext]);
 
   // Check download status on mount
   useEffect(() => {
@@ -127,6 +254,23 @@ export default function LessonScreen() {
       );
     }
   }, [lessonId]);
+
+  // Backend is the source of truth for "already attempted" — the QuizAttempt
+  // table persists across app reinstalls/updates (local storage doesn't). OR it
+  // with the local flag so we never lose attempted state. When the backend says
+  // attempted, also seed the local cache so offline reads stay consistent.
+  useEffect(() => {
+    if (lessonId && quizData?.attempted) {
+      setQuizAttemptedBefore(true);
+      userScopedKey('ck_quiz_attempted_lessons').then(async (key) => {
+        const attempted = (await StorageService.getObject<string[]>(key)) ?? [];
+        if (!attempted.includes(lessonId)) {
+          attempted.push(lessonId);
+          await StorageService.setObject(key, attempted);
+        }
+      });
+    }
+  }, [lessonId, quizData?.attempted]);
 
   // Fetch weekly streak for this lesson
   const { data: streakData } = useQuery({
@@ -159,7 +303,19 @@ export default function LessonScreen() {
     } catch {
       // Silently fail - will retry next time
     }
-  }, [lessonId, lessonCompleted, queryClient]);
+    // When the video finishes, offer to continue to the next lesson (mirrors the
+    // "up next" prompt that mobile learning apps show at the end of a video).
+    if (nextLessonInfo) {
+      Alert.alert(
+        'Lesson Complete! 🎉',
+        `Up next: ${nextLessonInfo.lesson.title}`,
+        [
+          { text: 'Stay here', style: 'cancel' },
+          { text: 'Next Lesson ▶', onPress: goToNextLesson },
+        ],
+      );
+    }
+  }, [lessonId, lessonCompleted, queryClient, nextLessonInfo, goToNextLesson]);
 
   // Load like/dislike/view counts + user's current reaction (mirrors desktop)
   useEffect(() => {
@@ -229,6 +385,8 @@ export default function LessonScreen() {
     }
   }, [activeTab, reviewsData, reviewsLoading, loadLessonReviews]);
 
+
+
   // Submit lesson rating (mirrors desktop wording/behaviour)
   const handleSubmitLessonRating = useCallback(async () => {
     if (lessonRating === 0) {
@@ -284,7 +442,11 @@ export default function LessonScreen() {
 
   // Download Video (with signed URL)
   const downloadVideo = async () => {
-    if (!activeLesson?.videoUrl) {
+    // The playable URL now comes from the "sign on play" fetch (playVideoUrl),
+    // not activeLesson.videoUrl (which is empty under sign-on-play). Use the
+    // currently-selected quality if the user switched, else the resolved play URL.
+    const baseUrl = playVideoUrl || activeLesson?.videoUrl || '';
+    if (!baseUrl) {
       Alert.alert('Error', 'No video available to download.');
       return;
     }
@@ -294,8 +456,8 @@ export default function LessonScreen() {
     }
     try {
       // Download the quality the user currently selected in the player (mirrors
-      // desktop). Falls back to the Original URL if no quality was switched.
-      const dlUrl = selectedVideoUrl || activeLesson.videoUrl;
+      // desktop). Falls back to the resolved play URL if no quality was switched.
+      const dlUrl = selectedVideoUrl || baseUrl;
       Alert.alert('Downloading...', `Video download started${selectedQuality !== 'Original' ? ` (${selectedQuality})` : ''}.`);
       await DownloadService.download({
         lessonId,
@@ -317,7 +479,8 @@ export default function LessonScreen() {
   // Notes PDF helpers
   const isPdfUrl = activeLesson?.notes?.startsWith('http');
 
-  const viewPdf = () => {
+  const viewPdf = (url?: string) => {
+    setPdfViewerUrl(url ?? activeLesson?.notes ?? null);
     setPdfViewerVisible(true);
   };
 
@@ -459,7 +622,7 @@ export default function LessonScreen() {
   };
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'notes', label: '📄 Notes' },
+    { key: 'notes', label: '📊 PPT' },
     { key: 'quiz', label: '🧠 Quiz' },
     { key: 'exercise', label: '💻 Exercise' },
     { key: 'homework', label: '📝 Homework' },
@@ -482,19 +645,22 @@ export default function LessonScreen() {
       {/* Video Player — collapses when keyboard is open for more scroll space */}
       {!keyboardVisible && (
         <VideoPlayer
-          videoUrl={activeLesson?.videoUrl ?? ''}
+          videoUrl={playVideoUrl}
           title={activeLesson?.title}
-          qualityUrls={activeLesson?.qualityUrls}
+          qualityUrls={playQualityUrls}
           onQualityChange={(q, url) => { setSelectedQuality(q); setSelectedVideoUrl(url); }}
-          hlsQualities={activeLesson?.hlsQualities}
+          hlsQualities={playHlsQualities}
           onComplete={handleVideoComplete}
           onViewCounted={handleViewCounted}
           onProgress={handleVideoProgress}
+          // Show a spinner (not "not available") during the brief sign-on-play
+          // URL fetch: loading = play data not resolved yet AND no fallback URL.
+          loading={!playData && !playVideoUrl}
         />
       )}
 
       {/* Engagement bar: like / dislike / views (mirrors desktop) */}
-      {!keyboardVisible && activeLesson?.videoUrl ? (
+      {!keyboardVisible && (playVideoUrl || activeLesson?.videoUrl) ? (
         <View style={styles.engagementBar}>
           <TouchableOpacity
             style={[styles.engBtn, userReaction === 'like' && styles.engBtnLike]}
@@ -517,6 +683,19 @@ export default function LessonScreen() {
             <Text style={styles.engCount}>{views} views</Text>
           </View>
         </View>
+      ) : null}
+
+      {/* Next Lesson button — continuous across modules (mirrors desktop). Only
+          shown AFTER the video has finished (lessonCompleted) and when there is a
+          next lesson. Its play URL is prefetched, so it opens near-instantly. */}
+      {!keyboardVisible && lessonCompleted && nextLessonInfo ? (
+        <TouchableOpacity style={styles.nextBtn} onPress={goToNextLesson} activeOpacity={0.85}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.nextBtnLabel}>UP NEXT</Text>
+            <Text style={styles.nextBtnTitle} numberOfLines={1}>{nextLessonInfo.lesson.title}</Text>
+          </View>
+          <Text style={styles.nextBtnArrow}>Next ▶</Text>
+        </TouchableOpacity>
       ) : null}
 
       {/* Action Toolbar — hidden when keyboard open */}
@@ -567,30 +746,21 @@ export default function LessonScreen() {
       {/* Tab Content */}
       <ScrollView ref={scrollViewRef} style={styles.tabContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
 
-        {/* Notes Tab */}
+        {/* PPT Tab — shows the single module study file (name ends with "ppt"). */}
         {activeTab === 'notes' && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>📄 Lesson Notes</Text>
-            {activeLesson?.notes ? (
-              isPdfUrl ? (
-                <View>
-                  <Text style={styles.notesText}>PDF notes are available for this lesson.</Text>
-                  <View style={styles.pdfBtnRow}>
-                    <TouchableOpacity style={styles.pdfBtn} onPress={viewPdf}>
-                      <Text style={styles.pdfBtnText}>📄 View PDF Notes</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.pdfBtn, styles.pdfBtnDownload]} onPress={downloadPdf}>
-                      <Text style={[styles.pdfBtnText, styles.pdfBtnTextDownload]}>
-                        {pdfDownloaded ? '✅ Downloaded' : '⬇️ Download PDF'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+            <Text style={styles.cardTitle}>📊 Module PPT</Text>
+            {notesMaterial ? (
+              <View>
+                <Text style={styles.notesText}>Study material (PPT) is available for this module.</Text>
+                <View style={styles.pdfBtnRow}>
+                  <TouchableOpacity style={styles.pdfBtn} onPress={() => viewPdf(notesMaterial.fileUrl)}>
+                    <Text style={styles.pdfBtnText}>📊 View PPT</Text>
+                  </TouchableOpacity>
                 </View>
-              ) : (
-                <Text style={styles.notesText}>{activeLesson.notes}</Text>
-              )
+              </View>
             ) : (
-              <Text style={styles.emptyText}>No notes available for this lesson yet.</Text>
+              <Text style={styles.emptyText}>No PPT available for this module yet.</Text>
             )}
           </View>
         )}
@@ -625,8 +795,8 @@ export default function LessonScreen() {
                     </Text>
                     <Text style={styles.question}>{quizzes[currentQuizIndex].question}</Text>
                     {quizzes[currentQuizIndex].options.map((opt, i) => {
-                      let bg = Colors.card;
-                      let border = Colors.border;
+                      let bg: string = Colors.card;
+                      let border: string = Colors.border;
                       if (quizSubmitted) {
                         if (i === quizzes[currentQuizIndex].answer) { bg = Colors.successLight; border = Colors.success; }
                         else if (i === selectedOption) { bg = Colors.dangerLight; border = Colors.danger; }
@@ -938,10 +1108,11 @@ export default function LessonScreen() {
       {/* Coins Modal */}
       <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
 
-      {/* PDF Viewer Modal */}
+      {/* PDF Viewer Modal — shows the currently-selected URL (lesson notes or a
+          module study-material file) */}
       <PdfViewer
         visible={pdfViewerVisible}
-        pdfUrl={activeLesson?.notes ?? ''}
+        pdfUrl={pdfViewerUrl ?? activeLesson?.notes ?? ''}
         onClose={() => setPdfViewerVisible(false)}
       />
     </SafeAreaView>
@@ -982,6 +1153,21 @@ const styles = StyleSheet.create({
   engIcon: { fontSize: 14 },
   engCount: { color: '#fff', fontSize: 12, fontWeight: '700' },
   engViews: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
+
+  // "Next Lesson" button (continuous across modules — industry-standard "up next")
+  nextBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginHorizontal: Spacing.xl, marginVertical: 10,
+    paddingHorizontal: 16, paddingVertical: 12, borderRadius: Radius.lg,
+    backgroundColor: 'rgba(99,102,241,0.15)',
+    borderWidth: 1, borderColor: 'rgba(99,102,241,0.5)',
+  },
+  nextBtnLabel: {
+    color: Colors.muted, fontSize: 10, fontWeight: '700',
+    letterSpacing: 1, marginBottom: 2,
+  },
+  nextBtnTitle: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  nextBtnArrow: { color: '#a5b4fc', fontSize: 14, fontWeight: '800' },
 
   // Rate tab
   rateStarsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 },
@@ -1102,4 +1288,20 @@ const styles = StyleSheet.create({
   },
   pdfBtnText: { color: Colors.primary, fontSize: Typography.sm, fontWeight: FontWeight.bold },
   pdfBtnTextDownload: { color: Colors.success },
+
+  // Module study-material rows (Notes tab)
+  materialRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md,
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  materialTitle: { color: '#fff', fontSize: Typography.sm, fontWeight: FontWeight.bold },
+  materialMeta: { color: Colors.muted, fontSize: Typography.xs, marginTop: 2 },
+  materialBtn: {
+    backgroundColor: Colors.primaryLight, borderRadius: Radius.sm,
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderWidth: 1, borderColor: Colors.primary,
+  },
+  materialBtnText: { color: Colors.primary, fontSize: Typography.xs, fontWeight: FontWeight.bold },
 });

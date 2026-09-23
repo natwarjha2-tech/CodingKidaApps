@@ -22,6 +22,23 @@ export function formatCourseDuration(totalSeconds?: number): string {
 }
 
 /**
+ * Format a single lesson's stored duration as a clock label (mirrors desktop
+ * formatDuration used in the course-detail lesson rows): "MM:SS" or "HH:MM:SS".
+ * Returns "--" when the duration is unset/invalid — never a raw number like
+ * "109" or "00:00". Accepts the raw stored string (seconds, MM:SS, or HH:MM:SS).
+ */
+export function formatLessonDuration(d?: string | null): string {
+  const secs = parseLessonDuration(d);
+  if (secs <= 0) return '--';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = (n: number) => (n < 10 ? '0' : '') + n;
+  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+  return `${pad(m)}:${pad(s)}`;
+}
+
+/**
  * Parse a stored lesson duration into seconds (mirrors desktop
  * _parseLessonDuration). Supports plain seconds ("383"), "MM:SS" ("6:23") and
  * "HH:MM:SS". Unset values ("00:00" / "0" / "") contribute 0.

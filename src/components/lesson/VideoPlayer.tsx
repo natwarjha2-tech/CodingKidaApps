@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Video, { type OnProgressData, type OnLoadData } from 'react-native-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Colors, Spacing, Typography, FontWeight } from '@/theme';
@@ -16,13 +16,21 @@ interface VideoPlayerProps {
   /** Fired when the user switches quality — reports the selected quality + its URL
    *  so the parent can download exactly that quality (mirrors desktop). */
   onQualityChange?: (quality: string, url: string) => void;
+  /** True while the signed play URL is still being fetched (sign-on-play). When
+   *  true and there's no URL yet, show a loading spinner instead of the empty
+   *  "not available" placeholder — so the brief fetch window looks polished. */
+  loading?: boolean;
 }
 
-export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProgress, onComplete, onViewCounted, onQualityChange }: VideoPlayerProps) {
+export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProgress, onComplete, onViewCounted, onQualityChange, loading }: VideoPlayerProps) {
   const videoRef = useRef<any>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [hasCompleted, setHasCompleted] = useState(false);
+  // True from the moment a source is set until the first frame is ready (onLoad)
+  // or while the player reports it's buffering. Used to keep a spinner OVER the
+  // video so there's no black gap between "signed URL arrived" and "video plays".
+  const [buffering, setBuffering] = useState(true);
 
   // View counting: count ~30s of actual playback progress, fire once (like desktop)
   const watchedSecs = useRef(0);
@@ -49,19 +57,36 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const savedSeek = useRef(0);
 
-  // Report the initial (default) quality to the parent once, so download uses it
-  // even if the user never opens the quality menu.
+  // CRITICAL: the source props (videoUrl / qualityUrls) arrive ASYNC under
+  // "sign on play" — the player first mounts with an empty videoUrl, then the
+  // signed URL lands a moment later. useState only captured the INITIAL (empty)
+  // url, so without this the player kept an empty source ("Trying to load empty
+  // source") and never played. Re-sync the current source whenever the incoming
+  // default source changes (e.g. empty → signed URL, or a new lesson).
   useEffect(() => {
+    setCurrentQuality(_def.q);
+    setCurrentUrl(_def.url);
+    // A new source means we're buffering again until the first frame is ready.
+    if (_def.url) setBuffering(true);
+    // Tell the parent the (new) default quality so downloads use it even if the
+    // user never opens the quality menu.
     onQualityChange?.(_def.q, _def.url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_def.q, _def.url]);
 
   const handleLoad = useCallback((data: OnLoadData) => {
     setDuration(data.duration);
+    setBuffering(false); // first frame is ready — hide the overlay spinner
     if (savedSeek.current > 0) {
       videoRef.current?.seek(savedSeek.current);
       savedSeek.current = 0;
     }
+  }, []);
+
+  // react-native-video reports buffering start/stop. Keep the overlay spinner in
+  // sync so any mid-stream rebuffer also shows the spinner instead of a freeze.
+  const handleBuffer = useCallback((e: { isBuffering: boolean }) => {
+    setBuffering(e.isBuffering);
   }, []);
 
   const handleProgress = useCallback((data: OnProgressData) => {
@@ -88,18 +113,31 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
     savedSeek.current = currentTime;
     let url = videoUrl;
     if (q !== 'Original' && qualityUrls?.[q]) url = qualityUrls[q];
+    setBuffering(true); // switching source — show spinner until it re-loads
     setCurrentUrl(url);
     setCurrentQuality(q);
     setShowQualityMenu(false);
     onQualityChange?.(q, url); // tell parent so download uses the selected quality
   };
 
-  if (!videoUrl) {
+  if (!currentUrl) {
+    // While the signed URL is still being fetched (sign-on-play), show a loading
+    // spinner — NOT "Video not available" (that only shows once the fetch is done
+    // and there's genuinely no video). Mirrors YouTube's brief loading state.
     return (
       <View style={styles.placeholder}>
-        <Text style={{ fontSize: 48 }}>🎬</Text>
-        <Text style={styles.phTitle}>{title ?? 'Lesson Video'}</Text>
-        <Text style={styles.phMeta}>Video not available</Text>
+        {loading ? (
+          <>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={styles.phMeta}>Loading video…</Text>
+          </>
+        ) : (
+          <>
+            <Text style={{ fontSize: 48 }}>🎬</Text>
+            <Text style={styles.phTitle}>{title ?? 'Lesson Video'}</Text>
+            <Text style={styles.phMeta}>Video not available</Text>
+          </>
+        )}
       </View>
     );
   }
@@ -116,6 +154,7 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
           controls={true}
           resizeMode="contain"
           onLoad={handleLoad}
+          onBuffer={handleBuffer}
           onProgress={handleProgress}
           progressUpdateInterval={1000}
           ignoreSilentSwitch="ignore"
@@ -127,6 +166,14 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
             ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
           }}
         />
+        {/* Overlay spinner: covers the black gap between the source being set and
+            the first frame being ready (and any mid-stream rebuffering), so the
+            video never "pops in" out of a black screen. */}
+        {buffering && (
+          <View style={styles.bufferOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color={Colors.primary} />
+          </View>
+        )}
       </View>
 
       {/* Quality selector — below video, always visible, no overlay conflict */}
@@ -160,6 +207,11 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
 const styles = StyleSheet.create({
   videoContainer: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   video: { width: '100%', height: '100%' },
+  bufferOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
   placeholder: { width: '100%', aspectRatio: 16 / 9, backgroundColor: Colors.card, alignItems: 'center', justifyContent: 'center' },
   phTitle: { color: '#fff', fontSize: Typography.base, fontWeight: FontWeight.bold, marginTop: 8 },
   phMeta: { color: Colors.muted, fontSize: Typography.xs, marginTop: 4 },

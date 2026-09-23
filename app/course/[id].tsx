@@ -7,7 +7,7 @@ import { useCourseStore } from '@/store';
 import { DownloadService } from '@/services';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import type { ModuleMaterial } from '@/types';
-import { formatCourseDuration, courseLessonCount, courseStudents, courseDurationSeconds, courseRating } from '@/utils/course.util';
+import { formatCourseDuration, courseLessonCount, courseStudents, courseDurationSeconds, courseRating, formatLessonDuration } from '@/utils/course.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 // Icon + color per study-material file type (mirrors desktop)
@@ -37,6 +37,9 @@ export default function CourseDetailScreen() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const course = data?.course;
+  // Completed lessons for this course (backend returns the IDs). Used to mark
+  // each lesson row "Completed" with a check — mirrors desktop course detail.
+  const completedSet = new Set(course?.completedLessons ?? []);
 
   // Refresh downloaded-status for every study material (reuses existing DownloadService).
   const refreshMaterialStatus = useCallback(async () => {
@@ -191,28 +194,31 @@ export default function CourseDetailScreen() {
             <Text style={styles.moduleTitle}>{mod.title}</Text>
             {mod.lessons.map((lesson) => {
               const canAccess = course.isEnrolled || lesson.isFree;
+              const isCompleted = completedSet.has(lesson.id);
               return (
                 <TouchableOpacity
                   key={lesson.id}
-                  style={[styles.lessonItem, !canAccess && styles.lessonLocked]}
+                  style={[styles.lessonItem, !canAccess && styles.lessonLocked, isCompleted && styles.lessonCompleted]}
                   onPress={() => canAccess ? openLesson(lesson.id, mod.id) : openPayment()}
                 >
-                  <Text style={styles.lessonIcon}>{canAccess ? '▶' : '🔒'}</Text>
+                  <Text style={[styles.lessonIcon, isCompleted && { color: Colors.success }]}>
+                    {isCompleted ? '✅' : canAccess ? '▶' : '🔒'}
+                  </Text>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.lessonTitle, !canAccess && { color: Colors.muted }]}>
                       {lesson.title}
                     </Text>
-                    <Text style={styles.lessonDuration}>{lesson.duration}</Text>
+                    <Text style={styles.lessonDuration}>{formatLessonDuration(lesson.duration)}</Text>
                   </View>
                   <View style={[
                     styles.lessonBadge,
-                    { backgroundColor: lesson.isFree ? Colors.successLight : Colors.primaryLight },
+                    { backgroundColor: isCompleted ? Colors.successLight : lesson.isFree ? Colors.successLight : Colors.primaryLight },
                   ]}>
                     <Text style={[
                       styles.lessonBadgeText,
-                      { color: lesson.isFree ? Colors.success : Colors.purple },
+                      { color: isCompleted ? Colors.success : lesson.isFree ? Colors.success : Colors.purple },
                     ]}>
-                      {lesson.isFree ? 'Free' : course.isEnrolled ? 'Enrolled' : 'Pro'}
+                      {isCompleted ? 'Completed' : lesson.isFree ? 'Free' : course.isEnrolled ? 'Enrolled' : 'Pro'}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -307,6 +313,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.border,
   },
   lessonLocked: { opacity: 0.6 },
+  lessonCompleted: { borderColor: 'rgba(34,197,94,0.3)', backgroundColor: 'rgba(34,197,94,0.05)' },
   lessonIcon: { color: Colors.success, fontSize: Typography.sm, width: 16 },
   lessonTitle: { color: Colors.white, fontSize: Typography.sm, fontWeight: FontWeight.medium },
   lessonDuration: { color: Colors.muted, fontSize: Typography.xs, marginTop: 2 },

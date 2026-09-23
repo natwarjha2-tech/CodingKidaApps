@@ -12,6 +12,12 @@ export interface EnrolledCourse {
   progressPercent: number;
   completedLessons: number;
   totalLessons: number;
+  // Real durations (seconds) from the dashboard route — used for accurate
+  // "remaining time" instead of a per-lesson estimate. Optional for backward
+  // compatibility with older cached responses.
+  totalDurationSeconds?: number;
+  completedDurationSeconds?: number;
+  remainingDurationSeconds?: number;
 }
 
 export interface DashboardData {
@@ -70,6 +76,7 @@ export interface Achievement {
   badgeType: 'super-master' | 'master' | 'pro';
   lessonId: string;
   lessonTitle?: string;
+  moduleTitle?: string;
   courseId?: string;
   courseTitle?: string;
   score?: number;

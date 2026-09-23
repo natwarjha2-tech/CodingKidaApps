@@ -4,11 +4,11 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDashboard, useCoins, useWeeklyStreakCount } from '@/hooks';
-import { achievementsApi, weeklyStreakApi, coinsApi } from '@/api';
+import { achievementsApi, weeklyStreakApi, coinsApi, coursesApi } from '@/api';
 import { AttendanceService } from '@/services';
 import { formatCoinTx } from '@/utils/coinTx.util';
 import { Colors } from '@/theme';
-import type { Achievement } from '@/types';
+import type { Achievement, CourseDetail } from '@/types';
 
 const badgeEmoji: Record<string, string> = {
   'super-master': '🥇',
@@ -28,11 +28,13 @@ function formatDate(dateStr?: string): string {
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// Coin-reward timestamp: show date + time (not just time) so users know WHEN
+// a coin was credited. e.g. "12 Sep, 12:30 PM"
 function formatTime(dateStr: string): string {
   const d = new Date(dateStr);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
+  const date = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const time = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+  return `${date}, ${time}`;
 }
 
 // Gentle daily coding goal for the day-detail progress meter (mirrors desktop CK_DAY_GOAL_MINS).
@@ -80,6 +82,40 @@ export default function MyReportScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // Calendar day-detail popup (mirrors desktop showDayDetail)
   const [dayDetail, setDayDetail] = useState<ReturnType<typeof buildDayDetail> | null>(null);
+
+  // Course Progress — expandable dropdown that reveals modules and the completed
+  // lessons inside each. Course detail (modules + completedLessons) is fetched
+  // lazily on first expand and cached in-memory so a re-expand is instant.
+  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
+  const [courseDetails, setCourseDetails] = useState<Record<string, CourseDetail>>({});
+  const [courseDetailLoading, setCourseDetailLoading] = useState<string | null>(null);
+
+  const toggleCourseExpand = useCallback(async (courseId: string) => {
+    // Collapse if already open.
+    if (expandedCourseId === courseId) {
+      setExpandedCourseId(null);
+      return;
+    }
+    setExpandedCourseId(courseId);
+    // Fetch detail once; reuse the react-query cache used by the course screen.
+    if (!courseDetails[courseId]) {
+      setCourseDetailLoading(courseId);
+      try {
+        const res = await queryClient.fetchQuery({
+          queryKey: ['course', courseId],
+          queryFn: () => coursesApi.getById(courseId),
+          staleTime: 1000 * 60 * 2,
+        });
+        if (res?.success && res.course) {
+          setCourseDetails((prev) => ({ ...prev, [courseId]: res.course }));
+        }
+      } catch {
+        // Silent — the dropdown will show a friendly "couldn't load" message.
+      } finally {
+        setCourseDetailLoading(null);
+      }
+    }
+  }, [expandedCourseId, courseDetails, queryClient]);
 
   // Open the per-day detail popup with real attendance data.
   const openDayDetail = useCallback(async (dateKey: string) => {
@@ -518,8 +554,9 @@ export default function MyReportScreen() {
                       <Text style={styles.achievementTitle}>{achievements[0].title}</Text>
                       {achievements[0].courseTitle && (
                         <Text style={styles.achievementMeta}>
-                          {achievements[0].courseTitle}
-                          {achievements[0].lessonTitle ? ` · ${achievements[0].lessonTitle}` : ''}
+                          {[achievements[0].courseTitle, achievements[0].moduleTitle, achievements[0].lessonTitle]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </Text>
                       )}
                       <View style={styles.achievementStatsRow}>
@@ -558,8 +595,9 @@ export default function MyReportScreen() {
                             <Text style={styles.achievementTitle}>{achievement.title}</Text>
                             {achievement.courseTitle && (
                               <Text style={styles.achievementMeta}>
-                                {achievement.courseTitle}
-                                {achievement.lessonTitle ? ` · ${achievement.lessonTitle}` : ''}
+                                {[achievement.courseTitle, achievement.moduleTitle, achievement.lessonTitle]
+                                  .filter(Boolean)
+                                  .join(' · ')}
                               </Text>
                             )}
                             <View style={styles.achievementStatsRow}>
@@ -696,35 +734,94 @@ export default function MyReportScreen() {
                 <Text style={styles.emptyText}>Enroll in a course to see progress here.</Text>
               </View>
             ) : (
-              enrolledCourses.map((course) => (
-                <View key={course.id} style={styles.courseCard}>
-                  <View style={styles.courseHeader}>
-                    <Text style={styles.courseTitle} numberOfLines={1}>
-                      {course.title}
-                    </Text>
-                    <Text style={styles.coursePercent}>{course.progressPercent}%</Text>
+              enrolledCourses.map((course) => {
+                const isExpanded = expandedCourseId === course.id;
+                const detail = courseDetails[course.id];
+                const completedSet = new Set(detail?.completedLessons ?? []);
+                const isDetailLoading = courseDetailLoading === course.id;
+                return (
+                  <View key={course.id} style={styles.courseCard}>
+                    {/* Tappable header — toggles the module/lesson dropdown */}
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => toggleCourseExpand(course.id)}>
+                      <View style={styles.courseHeader}>
+                        <Text style={styles.courseTitle} numberOfLines={1}>
+                          {course.title}
+                        </Text>
+                        <Text style={styles.coursePercent}>{course.progressPercent}%</Text>
+                      </View>
+                      <View style={styles.progressBarBg}>
+                        <View
+                          style={[
+                            styles.progressBarFill,
+                            {
+                              width: `${course.progressPercent}%`,
+                              backgroundColor:
+                                course.progressPercent >= 100
+                                  ? Colors.success
+                                  : course.progressPercent >= 50
+                                  ? Colors.warning
+                                  : Colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                      <View style={styles.courseMetaRow}>
+                        <Text style={styles.courseMeta}>
+                          {course.completedLessons ?? 0} / {course.totalLessons ?? 0} lessons completed
+                        </Text>
+                        <Text style={styles.courseChevron}>{isExpanded ? '▲' : '▼'}</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* Dropdown: modules → completed lessons inside each */}
+                    {isExpanded && (
+                      <View style={styles.moduleDropdown}>
+                        {isDetailLoading && !detail ? (
+                          <ActivityIndicator color={Colors.primary} style={{ marginVertical: 12 }} />
+                        ) : !detail || detail.modules.length === 0 ? (
+                          <Text style={styles.moduleEmpty}>Couldn't load lessons. Tap again to retry.</Text>
+                        ) : (
+                          detail.modules.map((mod) => {
+                            const modCompleted = mod.lessons.filter((l) => completedSet.has(l.id)).length;
+                            return (
+                              <View key={mod.id} style={styles.moduleBlock}>
+                                <View style={styles.moduleHead}>
+                                  <Text style={styles.moduleName} numberOfLines={1}>{mod.title}</Text>
+                                  <Text style={styles.moduleCount}>
+                                    {modCompleted}/{mod.lessons.length}
+                                  </Text>
+                                </View>
+                                {mod.lessons.map((lesson) => {
+                                  const done = completedSet.has(lesson.id);
+                                  return (
+                                    <TouchableOpacity
+                                      key={lesson.id}
+                                      style={styles.lessonRow}
+                                      activeOpacity={0.7}
+                                      onPress={() => router.push(`/course/${course.id}`)}
+                                    >
+                                      <Text style={[styles.lessonCheck, { color: done ? Colors.success : Colors.muted }]}>
+                                        {done ? '✅' : '⬜'}
+                                      </Text>
+                                      <Text
+                                        style={[styles.lessonName, done && styles.lessonNameDone]}
+                                        numberOfLines={1}
+                                      >
+                                        {lesson.title}
+                                      </Text>
+                                      {done && <Text style={styles.lessonDoneTag}>Completed</Text>}
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                            );
+                          })
+                        )}
+                      </View>
+                    )}
                   </View>
-                  <View style={styles.progressBarBg}>
-                    <View
-                      style={[
-                        styles.progressBarFill,
-                        {
-                          width: `${course.progressPercent}%`,
-                          backgroundColor:
-                            course.progressPercent >= 100
-                              ? Colors.success
-                              : course.progressPercent >= 50
-                              ? Colors.warning
-                              : Colors.primary,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.courseMeta}>
-                    {course.completedLessons ?? 0} / {course.totalLessons ?? 0} lessons completed
-                  </Text>
-                </View>
-              ))
+                );
+              })
             )}
 
             <View style={{ height: 32 }} />
@@ -1094,7 +1191,39 @@ const styles = StyleSheet.create({
   },
   courseTitle: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, marginRight: 8 },
   coursePercent: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
-  courseMeta: { color: Colors.muted, fontSize: 12, marginTop: 8 },
+  courseMeta: { color: Colors.muted, fontSize: 12 },
+  courseMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
+  courseChevron: { color: Colors.muted, fontSize: 10, marginLeft: 8 },
+
+  // Course Progress dropdown — modules → completed lessons
+  moduleDropdown: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  moduleEmpty: { color: Colors.muted, fontSize: 12, textAlign: 'center', paddingVertical: 8 },
+  moduleBlock: { marginBottom: 12 },
+  moduleHead: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6,
+  },
+  moduleName: {
+    color: '#c4b5fd', fontSize: 12, fontWeight: '700', flex: 1, marginRight: 8,
+    textTransform: 'uppercase', letterSpacing: 0.4,
+  },
+  moduleCount: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
+  lessonRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 6, paddingHorizontal: 8,
+    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 8, marginBottom: 4,
+  },
+  lessonCheck: { fontSize: 12, width: 18 },
+  lessonName: { color: 'rgba(255,255,255,0.7)', fontSize: 12.5, flex: 1 },
+  lessonNameDone: { color: '#fff' },
+  lessonDoneTag: {
+    color: Colors.success, fontSize: 9.5, fontWeight: '700',
+    backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+  },
 
   // Empty
   emptyState: { alignItems: 'center', padding: 24 },

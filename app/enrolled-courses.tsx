@@ -1,19 +1,34 @@
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useDashboard, useCourses } from '@/hooks';
+import { useDashboard } from '@/hooks';
 import { useCourseStore } from '@/store';
-import { courseDurationSeconds } from '@/utils/course.util';
+import { courseThumb } from '@/utils/courseThumb';
 import { Colors } from '@/theme';
+import type { EnrolledCourse } from '@/types';
 
-// Human "X min / Xh Ym remaining" from seconds. '' when unknown (hide, no fake).
-function formatRemaining(totalSec: number): string {
-  const sec = Math.max(0, Math.round(totalSec));
-  if (sec <= 0) return '';
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  if (h > 0) return `${h}h${m > 0 ? ` ${m}m` : ''}`;
-  return `${Math.max(m, 1)} min`;
+// Remaining seconds for an enrolled course, straight from the backend dashboard
+// (mirrors desktop `_courseRemainingSecs`). Returns null when durations aren't
+// available — so we never show a fabricated estimate.
+function courseRemainingSecs(c: EnrolledCourse): number | null {
+  if (typeof c.remainingDurationSeconds === 'number') return c.remainingDurationSeconds;
+  if (typeof c.totalDurationSeconds === 'number' && typeof c.completedDurationSeconds === 'number') {
+    return Math.max(0, c.totalDurationSeconds - c.completedDurationSeconds);
+  }
+  return null;
+}
+
+// Human "X min / Xh Ym remaining" from seconds (mirrors desktop _fmtRemainingTime).
+// null → neutral prompt (no fake estimate).
+function formatRemaining(secs: number | null): string {
+  if (secs === null || isNaN(secs)) return 'Keep learning →';
+  if (secs <= 0) return 'Almost done!';
+  const mins = Math.round(secs / 60);
+  if (mins < 1) return '<1 min remaining';
+  if (mins < 60) return `${mins} min remaining`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}h${m > 0 ? ` ${m}m` : ''} remaining`;
 }
 
 // Difficulty badge by progress (mirrors desktop)
@@ -27,10 +42,6 @@ export default function EnrolledCoursesScreen() {
   const { data, isLoading } = useDashboard();
   const enrolled = data?.enrolledCourses ?? [];
   const lessonContext = useCourseStore((s) => s.lessonContext);
-  // Course list (cached/prefetched) carries the real total duration per course —
-  // dashboard doesn't. Reuse it to compute a real, proportional remaining time.
-  const { data: allCoursesData } = useCourses('All', '');
-  const allCourses = allCoursesData?.courses ?? [];
 
   // Header stats: total courses + average progress
   const avgProgress = enrolled.length > 0
@@ -81,11 +92,12 @@ export default function EnrolledCoursesScreen() {
               const isComplete = pct >= 100;
               const diff = difficultyByProgress(pct);
               const lastLearned = (lessonContext && lessonContext.courseId === course.id) ? lessonContext.lessonTitle : '';
-              // Real remaining time: course's total duration × (remaining/total lessons).
-              // Real backend duration (list route); '' when unavailable → chip hidden.
-              const totalSec = courseDurationSeconds(allCourses.find((c) => c.id === course.id) ?? ({} as any));
-              const remainingSec = total > 0 ? totalSec * (remaining / total) : 0;
-              const remainingLabel = formatRemaining(remainingSec);
+              // Real remaining time straight from the backend dashboard
+              // (totalDurationSeconds - completedDurationSeconds). No fabrication —
+              // when the backend doesn't provide durations, show a neutral prompt
+              // instead of a fake estimate (mirrors desktop exactly).
+              const remainingLabel = formatRemaining(courseRemainingSecs(course));
+              const th = courseThumb(course.title);
               return (
                 <TouchableOpacity
                   key={course.id}
@@ -93,9 +105,13 @@ export default function EnrolledCoursesScreen() {
                   onPress={() => router.push(`/course/${course.id}`)}
                   activeOpacity={0.7}
                 >
-                  <View style={styles.courseIconWrap}>
+                  <View style={[styles.courseIconWrap, { backgroundColor: th.tint }]}>
                     <View style={styles.courseIconGlow} />
-                    <Text style={styles.courseIcon}>📖</Text>
+                    {th.img ? (
+                      <Image source={th.img} style={styles.courseIconImg} resizeMode="cover" />
+                    ) : (
+                      <Text style={styles.courseIcon}>{th.icon}</Text>
+                    )}
                   </View>
                   <View style={styles.courseInfo}>
                     <View style={styles.courseTitleRow}>
@@ -122,7 +138,7 @@ export default function EnrolledCoursesScreen() {
                     {isComplete ? (
                       <Text style={styles.courseFoot}>✅ Course Complete!</Text>
                     ) : remainingLabel ? (
-                      <Text style={styles.courseFoot}>⏱ ~{remainingLabel} remaining</Text>
+                      <Text style={styles.courseFoot}>⏱ {remainingLabel}</Text>
                     ) : null}
                   </View>
                   <Text style={[styles.percent, { color: isComplete ? Colors.success : Colors.purple }]}>{pct}%</Text>
@@ -190,6 +206,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(108,71,255,0.4)',
   },
   courseIcon: { fontSize: 22, zIndex: 1 },
+  courseIconImg: { width: '100%', height: '100%', zIndex: 1 },
   courseInfo: { flex: 1, minWidth: 0 },
   courseTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },

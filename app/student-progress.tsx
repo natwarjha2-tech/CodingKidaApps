@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/api';
 import { useXP } from '@/hooks';
+import { formatLessonDuration } from '@/utils/course.util';
 import { Colors } from '@/theme';
 
 function renderStars(rating: number): string {
@@ -93,8 +94,17 @@ export default function StudentProgressScreen() {
                 <Text style={styles.ratingValue}>{data.overallRating}/5</Text>
               </View>
               <Text style={styles.overallMeta}>
-                Based on quiz accuracy (70%) + exercise completion (30%) · Score: {data.overallScore}%
+                Based on quiz accuracy (70%) + exercise completion (30%)
               </Text>
+              {/* Prominent Learning Score (mirrors desktop) — big number + bar */}
+              <View style={styles.learningScoreBlock}>
+                <Text style={styles.learningScoreLabel}>LEARNING SCORE</Text>
+                <Text style={styles.learningScoreValue}>{data.overallScore ?? 0}%</Text>
+                <View style={styles.learningScoreTrack}>
+                  <View style={[styles.learningScoreFill, { width: `${Math.max(0, Math.min(100, data.overallScore ?? 0))}%` as any }]} />
+                </View>
+                <Text style={styles.learningScoreHint}>Keep going! You're doing great.</Text>
+              </View>
               <View style={styles.perfPill}>
                 <Text style={styles.perfPillText}>{perfLabel(data.overallScore || 0)}</Text>
               </View>
@@ -219,7 +229,10 @@ export default function StudentProgressScreen() {
                               ))}
                             </View>
                           </View>
-                          {lesson.duration ? <Text style={styles.lessonDuration}>{lesson.duration}</Text> : null}
+                          {(() => {
+                            const d = formatLessonDuration(lesson.duration);
+                            return d !== '--' ? <Text style={styles.lessonDuration}>{d}</Text> : null;
+                          })()}
                         </View>
                       ))}
                     </View>
@@ -262,6 +275,13 @@ const styles = StyleSheet.create({
   starsText: { fontSize: 18, color: '#fbbf24' },
   ratingValue: { fontSize: 22, fontWeight: '800', color: '#fff' },
   overallMeta: { fontSize: 11, color: Colors.muted, lineHeight: 16 },
+  // Prominent Learning Score (mirrors desktop hero score)
+  learningScoreBlock: { marginTop: 12 },
+  learningScoreLabel: { fontSize: 10, fontWeight: '700', color: Colors.muted, letterSpacing: 0.6, marginBottom: 2 },
+  learningScoreValue: { fontSize: 34, fontWeight: '800', color: '#a78bfa', lineHeight: 38, marginBottom: 8 },
+  learningScoreTrack: { height: 8, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
+  learningScoreFill: { height: '100%', borderRadius: 50, backgroundColor: '#8b5cf6' },
+  learningScoreHint: { fontSize: 11, color: Colors.muted, marginTop: 8 },
   overallStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' },
   miniStat: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10, alignItems: 'center', minWidth: 54 },
   miniStatXp: { backgroundColor: 'rgba(236,72,153,0.1)', borderWidth: 1, borderColor: 'rgba(236,72,153,0.25)' },

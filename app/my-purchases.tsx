@@ -196,7 +196,7 @@ export default function MyPurchasesScreen() {
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.orderTitle} numberOfLines={1}>{order.courseTitle || 'Course Purchase'}</Text>
                       <Text style={styles.orderId}>Order ID: {orderIdLabel(order)}</Text>
-                      <Text style={styles.orderDate}>📅 {formatDate(order.createdAt)} • {formatTime(order.createdAt)}</Text>
+                      <Text style={styles.orderDate}>{formatDate(order.createdAt)} • {formatTime(order.createdAt)}</Text>
                       {order.courseId ? (
                         <TouchableOpacity onPress={() => router.push(`/course/${order.courseId}`)}>
                           <Text style={styles.viewDetails}>View Details ›</Text>

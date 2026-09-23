@@ -13,23 +13,6 @@ import { apiClient, studentApi, achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import type { Achievement } from '@/types';
 
-// Subject thumbnail for enrolled-course rows (real desktop images; emoji fallback)
-let pImgC: any = null, pImgJava: any = null, pImgPython: any = null, pImgAI: any = null;
-try { pImgC = require('../../assets/courses/c.jpeg'); } catch {}
-try { pImgJava = require('../../assets/courses/java.jpeg'); } catch {}
-try { pImgPython = require('../../assets/courses/python.jpeg'); } catch {}
-try { pImgAI = require('../../assets/logos/ai.png'); } catch {}
-function courseThumb(title: string): { img: any; icon: string } {
-  const t = (title || '').toLowerCase().trim();
-  if (t.includes('python')) return { img: pImgPython, icon: '🐍' };
-  if (t.includes('java') && !t.includes('javascript')) return { img: pImgJava, icon: '☕' };
-  if (t.includes('ai') || t.includes('intelligence')) return { img: pImgAI, icon: '🧠' };
-  if (t === 'c' || t.startsWith('c ') || t.includes('c programming')) return { img: pImgC, icon: 'C' };
-  if (t.includes('web') || t.includes('html')) return { img: null, icon: '🌐' };
-  if (t.includes('scratch') || t.includes('game')) return { img: null, icon: '🎮' };
-  return { img: null, icon: '📘' };
-}
-
 // Profile-section lavender palette (per provided color spec).
 const L = {
   bg: '#F1F0FF',          // Main app background — Very Soft Lavender
@@ -83,7 +66,6 @@ export default function ProfileScreen() {
     staleTime: 1000 * 60 * 5,
   });
   const achievements: Achievement[] = achievementsData?.achievements ?? [];
-  const badgeEmojiMap: Record<string, string> = { 'super-master': '🥇', master: '🥈', pro: '🥉' };
 
   // Pre-fetch data for sub-pages so they open instantly (no loading spinner)
   useEffect(() => {
@@ -387,70 +369,10 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Enrolled Courses preview (mirrors desktop) */}
-        <View style={styles.previewCard}>
-          <View style={styles.previewHead}>
-            <Text style={styles.previewTitle}>📚 Enrolled Courses</Text>
-            <TouchableOpacity onPress={() => router.push('/enrolled-courses')}>
-              <Text style={styles.previewViewAll}>View All →</Text>
-            </TouchableOpacity>
-          </View>
-          {enrolledCourses.length === 0 ? (
-            <Text style={styles.previewEmpty}>No courses yet.</Text>
-          ) : (
-            enrolledCourses.slice(0, 3).map((c: any) => {
-              const th = courseThumb(c.title || '');
-              return (
-                <TouchableOpacity key={c.id} style={styles.previewCourseRow} onPress={() => router.push(`/course/${c.id}`)}>
-                  <View style={styles.previewCourseIcon}>
-                    {th.img ? <Image source={th.img} style={styles.previewCourseIconImg} resizeMode="cover" /> : <Text style={styles.previewCourseIconTxt}>{th.icon}</Text>}
-                  </View>
-                  <View style={styles.previewCourseInfo}>
-                    <Text style={styles.previewCourseTitle} numberOfLines={1}>{c.title}</Text>
-                    <View style={styles.previewBarBg}>
-                      <View style={[styles.previewBarFill, { width: `${c.progressPercent ?? 0}%` }]} />
-                    </View>
-                  </View>
-                  <Text style={styles.previewCoursePct}>{c.progressPercent ?? 0}%</Text>
-                  <Text style={styles.previewChevron}>›</Text>
-                </TouchableOpacity>
-              );
-            })
-          )}
-          <TouchableOpacity style={styles.browseMore} onPress={() => router.push('/(tabs)/courses')}>
-            <Text style={styles.browseMoreText}>+ Browse More Courses</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Achievements preview (mirrors desktop) */}
-        <View style={styles.previewCard}>
-          <View style={styles.previewHead}>
-            <Text style={styles.previewTitle}>🏆 Achievements</Text>
-            <TouchableOpacity onPress={() => router.push('/achievements')}>
-              <Text style={[styles.previewViewAll, { color: Colors.warning }]}>View All →</Text>
-            </TouchableOpacity>
-          </View>
-          {achievements.length === 0 ? (
-            <Text style={styles.previewEmpty}>No achievements yet. Complete quizzes to earn badges!</Text>
-          ) : (
-            <View style={styles.medalRow}>
-              {achievements.slice(0, 3).map((a) => {
-                const medalBg = a.badgeType === 'super-master' ? '#FFF6DC' : a.badgeType === 'master' ? '#EEF1F5' : '#FBEFE0';
-                const dateStr = (a.earnedAt || a.createdAt)
-                  ? new Date(a.earnedAt || a.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                  : '';
-                return (
-                  <View key={a.id} style={[styles.medal, { backgroundColor: medalBg }]}>
-                    <Text style={styles.medalEmoji}>{badgeEmojiMap[a.badgeType] || '🏅'}</Text>
-                    <Text style={styles.medalTitle} numberOfLines={1}>{a.title}</Text>
-                    <Text style={styles.medalMeta} numberOfLines={1}>{a.courseTitle || ''}</Text>
-                    {dateStr ? <Text style={styles.medalDate}>{dateStr}</Text> : null}
-                  </View>
-                );
-              })}
-            </View>
-          )}
-        </View>
+        {/* Enrolled Courses & Achievements previews removed here — they already
+            live on the Dashboard, so showing them again on Profile was a
+            duplicate. The "Learning"/"Badges" stat tiles above still summarise
+            them, and the menu below links to the full pages. */}
 
         {/* Menu Items */}
         <View style={styles.menuSection}>
@@ -656,44 +578,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECECF2',
   },
   xpSpipOn: { backgroundColor: L.pink },
-
-  // Preview cards (Enrolled Courses + Achievements)
-  previewCard: {
-    marginHorizontal: 16, marginBottom: 16,
-    backgroundColor: '#E7E3FB', borderRadius: 16, padding: 16,
-    borderWidth: 1, borderColor: '#DAD3F5',
-    shadowColor: L.blue, shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 2,
-  },
-  previewHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  previewTitle: { color: L.ink, fontSize: 14, fontWeight: '700' },
-  previewViewAll: { color: L.purple, fontSize: 12, fontWeight: '600' },
-  previewEmpty: { color: L.sub, fontSize: 12, paddingVertical: 8 },
-  previewCourseRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
-  previewCourseIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  previewCourseIconImg: { width: '100%', height: '100%' },
-  previewCourseIconTxt: { fontSize: 18, fontWeight: '900', color: L.blue },
-  previewCourseInfo: { flex: 1, minWidth: 0 },
-  previewCourseTitle: { color: L.ink, fontSize: 13, fontWeight: '700', marginBottom: 6 },
-  previewBarBg: { height: 6, borderRadius: 4, backgroundColor: '#ECECF2', overflow: 'hidden' },
-  previewBarFill: { height: 6, borderRadius: 4, backgroundColor: L.blue },
-  previewCoursePct: { color: L.blue, fontSize: 12.5, fontWeight: '800', width: 38, textAlign: 'right' },
-  previewChevron: { color: L.sub, fontSize: 18, fontWeight: '300' },
-  // Achievements medals
-  medalRow: { flexDirection: 'row', gap: 8 },
-  medal: { flex: 1, borderRadius: 14, padding: 10, alignItems: 'center' },
-  medalEmoji: { fontSize: 26, marginBottom: 4 },
-  medalTitle: { color: L.ink, fontSize: 11, fontWeight: '900', textAlign: 'center' },
-  medalMeta: { color: L.sub, fontSize: 9, fontWeight: '600', textAlign: 'center', marginTop: 1 },
-  medalDate: { color: L.sub, fontSize: 8.5, fontWeight: '500', marginTop: 3 },
-  browseMore: {
-    marginTop: 10, paddingVertical: 10, borderRadius: 12, alignItems: 'center',
-    backgroundColor: L.purpleSoft, borderWidth: 1, borderColor: '#D8CCFF', borderStyle: 'dashed',
-  },
-  browseMoreText: { color: L.purple, fontSize: 12, fontWeight: '600' },
-  achRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
-  achEmoji: { fontSize: 22 },
-  achTitle: { color: L.ink, fontSize: 13, fontWeight: '600', marginBottom: 2 },
-  achMeta: { color: L.sub, fontSize: 11 },
 
   // Menu
   menuSection: { paddingHorizontal: 16, gap: 8 },

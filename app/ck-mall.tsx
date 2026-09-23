@@ -40,7 +40,9 @@ export default function CKMallScreen() {
     },
     staleTime: 1000 * 60 * 2,
   });
-  const transactions: CoinTx[] = coinsData?.transactions ?? [];
+  // Redemption history = only coins SPENT (redeemed on offers/discounts).
+  // Earned coins (quiz rewards etc.) belong in "My Coins", not here.
+  const transactions: CoinTx[] = (coinsData?.transactions ?? []).filter((t) => t.type === 'SPENT');
 
   // Usable discounts (ready to use at checkout). Endpoint may not exist yet —
   // fails silently to an empty list (same graceful behaviour as desktop).
@@ -240,8 +242,14 @@ export default function CKMallScreen() {
                   {/* Coin transactions — most recent first */}
                   {transactions.map((tx) => {
                     const earned = tx.type === 'EARNED';
+                    // Show WHEN it happened — date + time (redeemed/earned at).
                     let when = '';
-                    try { when = new Date(tx.createdAt).toLocaleDateString(); } catch {}
+                    try {
+                      const d = new Date(tx.createdAt);
+                      const date = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                      const time = d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+                      when = `${date}, ${time}`;
+                    } catch {}
                     return (
                       <View key={tx.id} style={styles.historyItem}>
                         <View style={[styles.historyIcon, { backgroundColor: earned ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)' }]}>

@@ -79,17 +79,33 @@ async function clearUserCache(userId: string) {
 }
 
 /**
- * Pre-fetch all major data silently after login.
+ * Pre-fetch all major data silently after login, then repaint any screen that
+ * is already mounted — mirrors the desktop app's "cache-instant + background
+ * refresh + auto re-render" (stale-while-revalidate) behaviour so the user
+ * never has to pull-to-refresh to see fresh data after login.
+ *
+ * IMPORTANT: the query keys here MUST match the keys the screens/hooks use, or
+ * the prefetch fills a cache nobody reads and the screen never updates. In
+ * particular the courses list uses ['courses', category, search] — not just
+ * ['courses'] — so we prefetch the exact ['courses','All',''] key.
  */
 function _prefetchAllData() {
-  queryClient.prefetchQuery({ queryKey: ['dashboard'], queryFn: () => apiClient.get('/api/student/dashboard?signed=true').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['courses'], queryFn: () => apiClient.get('/api/courses').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['coins'], queryFn: () => apiClient.get('/api/coins').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['achievements'], queryFn: () => apiClient.get('/api/achievements').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['student-progress'], queryFn: () => apiClient.get('/api/student/progress').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.get('/api/student/orders').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['mall'], queryFn: () => apiClient.get('/api/mall').then(r => r.data) });
-  queryClient.prefetchQuery({ queryKey: ['app-ratings'], queryFn: () => apiClient.get('/api/feedback/lesson?lessonId=app_rating').then(r => r.data) });
+  // fetchQuery (not prefetchQuery) so we can await + then invalidate to trigger
+  // a reactive re-render of any mounted screen once fresh data lands.
+  const jobs: Promise<unknown>[] = [
+    queryClient.fetchQuery({ queryKey: ['dashboard'], queryFn: () => apiClient.get('/api/student/dashboard?signed=true').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['courses', 'All', ''], queryFn: () => apiClient.get('/api/courses').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['coins'], queryFn: () => apiClient.get('/api/coins').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['achievements'], queryFn: () => apiClient.get('/api/achievements').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['student-progress'], queryFn: () => apiClient.get('/api/student/progress').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['my-orders'], queryFn: () => apiClient.get('/api/student/orders').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['mall'], queryFn: () => apiClient.get('/api/mall').then(r => r.data) }),
+    queryClient.fetchQuery({ queryKey: ['app-ratings'], queryFn: () => apiClient.get('/api/feedback/lesson?lessonId=app_rating').then(r => r.data) }),
+  ];
+  // Each job updates its own cache reactively as it resolves. React Query's
+  // useQuery hooks subscribed to these keys will re-render automatically — no
+  // manual refresh needed. Failures are swallowed (offline stays on cache).
+  jobs.forEach((p) => p.catch(() => {}));
 }
 
 function AuthInitializer() {

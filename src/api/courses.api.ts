@@ -17,6 +17,29 @@ export const coursesApi = {
       .get<{ success: boolean; course: CourseDetail }>(`/api/courses/${id}?signed=true`)
       .then((r) => r.data),
 
+  // "Sign on play" — signed, ready-to-stream data for ONE lesson, fetched only
+  // when the user opens that lesson (the course response no longer signs every
+  // lesson upfront, which kept course-open fast for large courses).
+  getLessonPlay: (lessonId: string) =>
+    apiClient
+      .get<{
+        success: boolean;
+        lesson: {
+          id: string;
+          title: string;
+          notes: string;
+          videoUrl: string;
+          mediaId: string | null;
+          hlsMasterUrl: string | null;
+          hlsStatus: string;
+          hlsQualities: string[];
+          qualityUrls: Record<string, string>;
+          isFree: boolean;
+          locked: boolean;
+        };
+      }>(`/api/lessons/${lessonId}/play`)
+      .then((r) => r.data),
+
   enroll: (courseId: string) =>
     apiClient
       .post(`/api/courses/${courseId}/enroll`, {})

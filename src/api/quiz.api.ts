@@ -4,7 +4,9 @@ import type { Quiz } from '@/types';
 export const quizApi = {
   getByLesson: (lessonId: string) =>
     apiClient
-      .get<{ success: boolean; quizzes: Quiz[] }>(`/api/quiz?lessonId=${lessonId}`)
+      .get<{ success: boolean; quizzes: Quiz[]; attempted?: boolean; attemptedQuizIds?: string[] }>(
+        `/api/quiz?lessonId=${lessonId}`
+      )
       .then((r) => r.data),
 
   submitAttempt: (payload: {

@@ -1,60 +1,53 @@
-// ─── CodingKida App Colors — Premium Soft Light Theme ───────────────────────
-// Single source of truth for every screen. The keys are unchanged (so no screen
-// reference breaks) — only the VALUES were moved from the old dark theme to the
-// premium light theme, giving the whole app one consistent look. Screens that
-// still hardcode white text on top of these are fixed per-page during rollout.
+// Exact same color values as desktop app (global.css :root variables)
 export const Colors = {
-  // Backgrounds — soft off-white / very light lavender (never pure white)
-  bg: '#F4F6FC',        // main app background
-  bg2: '#FFFFFF',       // sheets / modals base
-  card: '#FFFFFF',      // primary cards
-  card2: '#FBFCFF',     // secondary cards (raised)
-  cardAlt: '#F1F0FF',   // soft lavender tinted surface
+  // Backgrounds — exact desktop values
+  bg: '#0f0f1a',        // --dark
+  bg2: '#1a1a2e',       // --dark2
+  card: '#16213e',      // --card-bg (sidebar cards)
+  card2: '#161B22',     // dashboard course cards
+  cardAlt: '#1a1830',   // login card bg
 
   // Brand
-  primary: '#6538FF',   // premium purple/indigo
-  primaryDark: '#4B23D6',
-  secondary: '#2F6BFF', // technology blue
+  primary: '#6c47ff',   // --primary
+  primaryDark: '#5035cc', // --primary-dark
+  secondary: '#ec4899', // pink accent
 
   // Semantic
   success: '#22c55e',
-  successLight: '#E4F8EC',
-  danger: '#F0316E',
-  dangerLight: '#FCE4EE',
-  warning: '#F5A623',
-  warningLight: '#FFF3DC',
+  successLight: 'rgba(34,197,94,0.15)',
+  danger: '#ef4444',
+  dangerLight: 'rgba(239,68,68,0.15)',
+  warning: '#f59e0b',
+  warningLight: 'rgba(245,158,11,0.15)',
 
-  // Text (dark ink on light surfaces)
+  // Text
   white: '#ffffff',
-  text: '#1E2233',      // primary text — deep ink
-  muted: '#8A90A2',     // muted / secondary text
+  text: '#e2e8f0',      // --text
+  muted: '#94a3b8',     // --muted
 
   // Borders
-  border: '#E6E9F2',
-  borderLight: '#EEF0F5',
+  border: 'rgba(255,255,255,0.08)',   // --border
+  borderLight: 'rgba(255,255,255,0.05)',
 
-  // Transparency helpers (soft brand tints)
-  primaryLight: '#EEE9FF',
-  primaryGlow: 'rgba(101,56,255,0.08)',
-  overlay: 'rgba(15,18,40,0.55)',
+  // Transparency helpers
+  primaryLight: 'rgba(108,71,255,0.15)',
+  primaryGlow: 'rgba(108,71,255,0.08)',
+  overlay: 'rgba(0,0,0,0.7)',
 
   // Coins
-  coin: '#F5A623',
-  coinLight: '#FFF3D6',
+  coin: '#fbbf24',
+  coinLight: 'rgba(245,158,11,0.15)',
 
   // Accent purples
-  purple: '#7A3BFF',
-  purple2: '#6538FF',
-
-  // Kept for the video player area, which stays intentionally dark.
-  videoBg: '#0F1117',
+  purple: '#a78bfa',
+  purple2: '#b251ff',
 } as const;
 
-// Premium light gradients (subtle — for depth where used).
+// Exact desktop gradients
 export const Gradients = {
-  primary: ['#6538FF', '#7A3BFF'] as const,
-  primaryBtn: ['#6538FF', '#7A3BFF'] as const,
-  welcome: ['#EFEAFF', '#E4EEFF'] as const,
-  success: ['#22C55E', '#34D399'] as const,
-  avatar: ['#a855f7', '#ec4899', '#f43f5e'] as const,
+  primary: ['#6c47ff', '#ec4899'] as const,        // main gradient
+  primaryBtn: ['#6c47ff', '#b251ff'] as const,      // button gradient
+  welcome: ['#2e1065', '#0B0E14'] as const,         // welcome banner
+  success: ['#10b981', '#34d399'] as const,
+  avatar: ['#a855f7', '#ec4899', '#f43f5e'] as const, // user avatar
 };

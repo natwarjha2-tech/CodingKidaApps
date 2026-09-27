@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ImageBackground, Image, Animated } from 'react-native';
-import Reanimated, { FadeInDown } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,8 +8,7 @@ import { useCourseStore } from '@/store';
 import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll, usePrefetchNotifications } from '@/hooks';
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
-import { AnimatedPressable, AnimatedProgressBar, AnimatedCounter } from '@/components/ui';
-import { Colors, EnterDelay, Duration } from '@/theme';
+import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
 import { getUnreadCount } from '@/services/notification.service';
 import { getLastLesson, type LastLesson } from '@/utils/lastLesson.util';
@@ -265,7 +263,7 @@ export default function DashboardScreen() {
       >
         {/* Welcome Card — banner artwork as background, dynamic native UI on top.
             Data/navigation unchanged — only the visual treatment is new. */}
-        <Reanimated.View entering={FadeInDown.delay(EnterDelay.hero).duration(Duration.slow)} style={styles.welcomeWrapper}>
+        <View style={styles.welcomeWrapper}>
           <ImageBackground
             source={require('../../assets/welcome-banner.png')}
             style={styles.welcomeBanner}
@@ -284,35 +282,31 @@ export default function DashboardScreen() {
               <Text style={styles.welcomeSubtitle}>keep growing.</Text>
             </View>
           </ImageBackground>
-        </Reanimated.View>
+        </View>
 
         {/* Stats Row — 2 thin cards in one row: Enrolled Courses + Latest Badge */}
-        <Reanimated.View entering={FadeInDown.delay(EnterDelay.stats).duration(Duration.slow)} style={styles.statsGrid}>
+        <View style={styles.statsGrid}>
           {/* Enrolled Courses */}
-          <AnimatedPressable
+          <TouchableOpacity
             style={styles.statCard}
             onPress={() => router.push('/enrolled-courses')}
-            haptic
+            activeOpacity={0.8}
           >
             <View style={[styles.statIconWrap, { backgroundColor: L.purpleSoft }]}>
               <Text style={styles.statEmoji}>📚</Text>
             </View>
             <View style={styles.statTextWrap}>
-              {isLoading ? (
-                <Text style={styles.statValue}>—</Text>
-              ) : (
-                <AnimatedCounter value={enrolledCount} style={styles.statValue} />
-              )}
+              <Text style={styles.statValue}>{isLoading ? '—' : enrolledCount}</Text>
               <Text style={styles.statLabel} numberOfLines={1}>Enrolled Courses</Text>
             </View>
             <Text style={styles.statChevron}>›</Text>
-          </AnimatedPressable>
+          </TouchableOpacity>
 
           {/* Latest Achievement Badge */}
-          <AnimatedPressable
+          <TouchableOpacity
             style={[styles.statCard, styles.statCardAmber]}
             onPress={() => router.push('/achievements')}
-            haptic
+            activeOpacity={0.8}
           >
             <View style={[styles.statIconWrap, { backgroundColor: '#FCE4B8' }]}>
               <Text style={styles.statEmoji}>{latestBadge ? (badgeEmoji[latestBadge.badgeType] || '🏅') : '🏆'}</Text>
@@ -324,22 +318,21 @@ export default function DashboardScreen() {
               <Text style={styles.statLabel} numberOfLines={1}>{latestBadge ? 'Latest Badge' : 'Earn your first badge!'}</Text>
             </View>
             <Text style={styles.statChevron}>›</Text>
-          </AnimatedPressable>
-        </Reanimated.View>
+          </TouchableOpacity>
+        </View>
 
         {/* Continue Learning (enriched — mirrors desktop) */}
         {resumeData && (
-          <Reanimated.View entering={FadeInDown.delay(EnterDelay.primary).duration(Duration.slow)}>
+          <>
             <View style={styles.continueHeader}>
               <Text style={styles.continueHeaderTitle}>Continue Learning ⚡</Text>
               <View style={styles.continueXpChip}>
                 <Text style={styles.continueXpChipText}>⭐ Earn +{resumeXp} XP</Text>
               </View>
             </View>
-            <AnimatedPressable
+            <TouchableOpacity
               style={styles.continueCard}
               onPress={openContinueLearning}
-              haptic
             >
               <View style={styles.continueThumbnail}>
                 <Text style={styles.continueThumbnailIcon}>▶</Text>
@@ -359,24 +352,20 @@ export default function DashboardScreen() {
                 <Text style={styles.continueMeta} numberOfLines={1}>
                   {resumeData.moduleTitle} · {resumeData.lessonTitle}
                 </Text>
-                <AnimatedProgressBar
-                  percent={resumePct}
-                  height={6}
-                  trackColor="rgba(0,0,0,0.06)"
-                  fillColor={L.purple}
-                  style={{ marginTop: 4 }}
-                />
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${resumePct}%` as any }]} />
+                </View>
                 <Text style={styles.continueProgressText}>{resumeProgressText}</Text>
               </View>
               <View style={styles.resumeBtn}>
                 <Text style={styles.resumeBtnText}>Resume ▶</Text>
               </View>
-            </AnimatedPressable>
-          </Reanimated.View>
+            </TouchableOpacity>
+          </>
         )}
 
         {/* Weekly Challenge card (driven by weekly-streak data) */}
-        <Reanimated.View entering={FadeInDown.delay(EnterDelay.secondary).duration(Duration.slow)} style={styles.wcCard}>
+        <View style={styles.wcCard}>
           {/* CodingKida calendar art — right side, doesn't cover text */}
           <ImageBackground
             source={require('../../assets/demo-calendar.png')}
@@ -388,12 +377,9 @@ export default function DashboardScreen() {
             <Text style={styles.wcProgressText}>{streakCompleted} / {streakTotal}</Text>
           </View>
           <View style={styles.wcProgressBarWrap}>
-            <AnimatedProgressBar
-              percent={wcPercent}
-              height={8}
-              trackColor="rgba(34,197,94,0.12)"
-              fillColor={L.green}
-            />
+            <View style={styles.wcProgressBar}>
+              <View style={[styles.wcProgressFill, { width: `${wcPercent}%` as any }]} />
+            </View>
           </View>
           <Text style={styles.wcDescription}>{wcDescription}</Text>
           <Text style={styles.wcReward}>{wcReward}</Text>
@@ -416,7 +402,7 @@ export default function DashboardScreen() {
             })}
           </View>
           <Text style={styles.streakFooter}>{streakFooter}</Text>
-        </Reanimated.View>
+        </View>
 
         {/* Recommended for You */}
         <View style={styles.sectionHeader}>

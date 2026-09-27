@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16, paddingTop: 8 },
 
   // Course Pills
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   loadingText: { color: Colors.muted, fontSize: 14 },
   emptyState: { alignItems: 'center', padding: 40 },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  emptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
   emptyText: { color: Colors.muted, fontSize: 14, textAlign: 'center' },
 
   // Current User Card
@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
   },
   currentUserLabel: { color: Colors.primary, fontSize: 12, fontWeight: '600', marginBottom: 4 },
   currentUserRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  currentUserRank: { color: '#fff', fontSize: 24, fontWeight: '800' },
+  currentUserRank: { color: Colors.primary, fontSize: 24, fontWeight: '800' },
   currentUserScore: { color: Colors.primary, fontSize: 18, fontWeight: '700' },
 
   // Leaderboard Rows
@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
   rankNumber: { color: Colors.muted, fontSize: 14, fontWeight: '700' },
   entryInfo: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  entryName: { color: '#fff', fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  entryName: { color: Colors.text, fontSize: 14, fontWeight: '600', flexShrink: 1 },
   youBadge: {
     backgroundColor: Colors.primary,
     borderRadius: 8,

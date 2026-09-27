@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
 
   // Rate Card
@@ -238,18 +238,18 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 20,
     borderWidth: 1, borderColor: Colors.border,
   },
-  rateTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 16 },
+  rateTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 16 },
   starsRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  star: { fontSize: 36, color: 'rgba(255,255,255,0.3)' },
+  star: { fontSize: 36, color: Colors.border },
   moodLabel: {
     alignSelf: 'center', borderWidth: 1, borderRadius: 20,
     paddingHorizontal: 14, paddingVertical: 5, marginBottom: 14,
   },
   moodLabelText: { fontSize: 13, fontWeight: '700' },
   feedbackInput: {
-    width: '100%', backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14,
+    width: '100%', backgroundColor: Colors.bg,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12, color: Colors.text, fontSize: 14,
     textAlignVertical: 'top', marginBottom: 6, minHeight: 80,
   },
   charCount: { alignSelf: 'flex-end', color: Colors.muted, fontSize: 11, marginBottom: 14 },
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 14,
     paddingHorizontal: 32, alignItems: 'center',
   },
-  submitBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  submitBtnText: { color: Colors.white, fontSize: 14, fontWeight: '700' },
   message: { marginTop: 12, fontSize: 13, fontWeight: '600' },
 
   // Reviews Card
@@ -267,23 +267,23 @@ const styles = StyleSheet.create({
   },
   reviewsSummary: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 16 },
   avgSection: { alignItems: 'center' },
-  avgValue: { fontSize: 32, fontWeight: '800', color: '#fbbf24', marginBottom: 2 },
+  avgValue: { fontSize: 32, fontWeight: '800', color: Colors.coin, marginBottom: 2 },
   avgLabel: { fontSize: 11, color: Colors.muted },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
   barLabel: { fontSize: 10, color: Colors.muted, width: 18 },
-  barBg: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
-  barFill: { height: 5, borderRadius: 3, backgroundColor: '#fbbf24' },
+  barBg: { flex: 1, height: 5, borderRadius: 3, backgroundColor: Colors.borderLight, overflow: 'hidden' },
+  barFill: { height: 5, borderRadius: 3, backgroundColor: Colors.coin },
   barCount: { fontSize: 10, color: Colors.muted, width: 18, textAlign: 'right' },
 
   // Recent reviews
   recentSection: { borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 14, marginTop: 14 },
-  recentTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 12 },
-  reviewItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  recentTitle: { color: Colors.text, fontSize: 13, fontWeight: '700', marginBottom: 12 },
+  reviewItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.borderLight },
   reviewHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
-  reviewName: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  reviewName: { color: Colors.text, fontSize: 13, fontWeight: '600' },
   reviewDate: { color: Colors.muted, fontSize: 11 },
-  reviewStars: { color: '#fbbf24', fontSize: 12, marginBottom: 3 },
-  reviewText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
+  reviewStars: { color: Colors.coin, fontSize: 12, marginBottom: 3 },
+  reviewText: { color: Colors.muted, fontSize: 12, lineHeight: 18 },
 
   // Empty
   emptyReviews: { alignItems: 'center', padding: 24, backgroundColor: Colors.card2, borderRadius: 14, borderWidth: 1, borderColor: Colors.border },

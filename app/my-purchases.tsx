@@ -127,7 +127,7 @@ export default function MyPurchasesScreen() {
                 <Text style={styles.statLabel}>Purchased</Text>
               </View>
               <View style={styles.statCard}>
-                <Text style={[styles.statValue, { color: '#ec4899' }]}>₹{totalSpent}</Text>
+                <Text style={[styles.statValue, { color: Colors.danger }]}>₹{totalSpent}</Text>
                 <Text style={styles.statLabel}>Total Spent</Text>
               </View>
               <View style={styles.statCard}>
@@ -261,16 +261,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   loadingState: { alignItems: 'center', padding: 60, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
   emptyState: { alignItems: 'center', padding: 60 },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  emptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
   emptyText: { color: Colors.muted, fontSize: 13, textAlign: 'center', marginBottom: 16 },
   exploreBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10 },
-  exploreBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  exploreBtnText: { color: Colors.white, fontSize: 13, fontWeight: '700' },
 
   statsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   statCard: {
@@ -286,22 +286,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, borderWidth: 1, borderColor: Colors.border, marginBottom: 12,
   },
   searchIcon: { fontSize: 14 },
-  searchInput: { flex: 1, color: '#fff', fontSize: 14, paddingVertical: 11 },
+  searchInput: { flex: 1, color: Colors.text, fontSize: 14, paddingVertical: 11 },
 
   filterRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
   filterChip: {
     paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border,
   },
-  filterChipActive: { backgroundColor: 'rgba(108,71,255,0.15)', borderColor: Colors.primary },
+  filterChipActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
   filterChipText: { color: Colors.muted, fontSize: 12, fontWeight: '600' },
   filterChipTextActive: { color: Colors.primary },
 
   historyHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  historyTitle: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  historyTitle: { color: Colors.text, fontSize: 15, fontWeight: '700' },
   sortBtn: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border,
   },
   sortText: { color: Colors.muted, fontSize: 12, fontWeight: '600' },
 
@@ -314,11 +314,11 @@ const styles = StyleSheet.create({
     width: 42, height: 42, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  orderTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  orderTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3 },
   orderId: { color: Colors.muted, fontSize: 11, marginBottom: 2 },
   orderDate: { color: Colors.muted, fontSize: 11, marginBottom: 4 },
   viewDetails: { color: Colors.primary, fontSize: 12, fontWeight: '600' },
-  orderAmount: { color: '#fff', fontSize: 15, fontWeight: '800', marginBottom: 4 },
+  orderAmount: { color: Colors.text, fontSize: 15, fontWeight: '800', marginBottom: 4 },
   orderStatus: { fontSize: 11, fontWeight: '700' },
 
   noResults: { alignItems: 'center', padding: 30 },
@@ -329,11 +329,11 @@ const styles = StyleSheet.create({
   pagination: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: 'center' },
   pageBtn: {
     minWidth: 34, height: 34, borderRadius: 8, paddingHorizontal: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border,
     alignItems: 'center', justifyContent: 'center',
   },
   pageBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   pageBtnDisabled: { opacity: 0.4 },
-  pageBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  pageBtnTextActive: { color: '#fff' },
+  pageBtnText: { color: Colors.text, fontSize: 13, fontWeight: '600' },
+  pageBtnTextActive: { color: Colors.white },
 });

@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
 
   // 24/7 Hero
@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
   },
   heroLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   heroIcon: { width: 42, height: 42, borderRadius: 13, backgroundColor: 'rgba(236,72,153,0.12)', alignItems: 'center', justifyContent: 'center' },
-  heroTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  heroTitle: { color: Colors.text, fontSize: 16, fontWeight: '800' },
   heroSub: { color: Colors.muted, fontSize: 11.5, marginTop: 2 },
   herePill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 1, borderColor: 'rgba(16,185,129,0.25)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   hereDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22c55e' },
@@ -188,12 +188,12 @@ const styles = StyleSheet.create({
   // Card head (shared)
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
   cardHeadIcon: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  cardHeadTitle: { color: '#fff', fontSize: 14.5, fontWeight: '700' },
+  cardHeadTitle: { color: Colors.text, fontSize: 14.5, fontWeight: '700' },
   cardHeadSub: { color: Colors.muted, fontSize: 11, marginTop: 1 },
 
   // Chat card
   chatCard: { backgroundColor: Colors.card2, borderRadius: 18, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(139,92,246,0.12)' },
-  chatDesc: { color: '#94a3b8', fontSize: 12.5, lineHeight: 19, marginBottom: 14 },
+  chatDesc: { color: Colors.muted, fontSize: 12.5, lineHeight: 19, marginBottom: 14 },
   chatBtn: { backgroundColor: 'rgba(37,211,102,0.15)', borderWidth: 1, borderColor: 'rgba(37,211,102,0.35)', borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
   chatBtnText: { color: '#25D366', fontSize: 13, fontWeight: '800' },
   chatNumber: { color: Colors.muted, fontSize: 11.5, textAlign: 'center', marginTop: 10 },
@@ -201,9 +201,9 @@ const styles = StyleSheet.create({
 
   // FAQ
   faqSection: { backgroundColor: Colors.card2, borderRadius: 18, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(251,191,36,0.12)' },
-  faqCard: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
+  faqCard: { backgroundColor: Colors.cardAlt, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: Colors.border },
   faqHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  faqQuestion: { color: '#fff', fontSize: 13, fontWeight: '600', flex: 1, marginRight: 12 },
+  faqQuestion: { color: Colors.text, fontSize: 13, fontWeight: '600', flex: 1, marginRight: 12 },
   faqToggle: { color: Colors.muted, fontSize: 18, fontWeight: '700' },
   faqAnswerWrap: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.border },
   faqAnswer: { color: Colors.muted, fontSize: 12.5, lineHeight: 19 },
@@ -212,11 +212,11 @@ const styles = StyleSheet.create({
   quickRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   quickCard: { flex: 1, backgroundColor: Colors.card2, borderRadius: 16, padding: 14, alignItems: 'center', borderWidth: 1 },
   quickIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  quickTitle: { color: '#fff', fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  quickTitle: { color: Colors.text, fontSize: 12, fontWeight: '800', textAlign: 'center' },
   quickSub: { color: Colors.muted, fontSize: 9.5, textAlign: 'center', marginTop: 3 },
 
   // Contact Us
-  contactHeading: { color: '#fff', fontSize: 15, fontWeight: '800', marginBottom: 12 },
+  contactHeading: { color: Colors.text, fontSize: 15, fontWeight: '800', marginBottom: 12 },
   contactGrid: { gap: 10 },
   contactCard: { backgroundColor: Colors.card2, borderRadius: 16, padding: 18, alignItems: 'center', borderWidth: 1 },
   contactIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },

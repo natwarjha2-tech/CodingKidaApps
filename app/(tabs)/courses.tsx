@@ -1,56 +1,44 @@
-import { useState, useMemo, useEffect, type FC } from 'react';
-import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, Image, ScrollView, ImageBackground, Animated } from 'react-native';
+import { useState, useMemo, useEffect } from 'react';
+import { View, Text, FlatList, TextInput, StyleSheet, ImageBackground, Animated } from 'react-native';
+import Reanimated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCourses, useCoins, useRefreshAll } from '@/hooks';
 import { coursesApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
-import { formatCourseDuration, courseLessonCount, courseStudents } from '@/utils/course.util';
+import { AnimatedPressable } from '@/components/ui';
+import { CourseCard, CourseSkeletonCard } from '@/components/course';
+import { EnterDelay, Duration } from '@/theme';
 
-// Light theme palette (UI only — consistent with Dashboard)
+let heroImg: any = null;
+try { heroImg = require('../../assets/courses/courses-hero.png'); } catch {}
+
+// Local light palette (kept for this screen's header/hero/search/chip styles).
 const L = {
-  bg: '#F6F8FC', ink: '#1E2233', sub: '#8A90A2', blue: '#2F6BFF', blueSoft: '#E6EEFF',
-  purple: '#7A3BFF', purpleSoft: '#EEE9FF', green: '#22C55E', greenSoft: '#E4F8EC',
+  bg: '#F4F3FC', ink: '#1E2233', sub: '#8A90A2', blue: '#2F6BFF', blueSoft: '#E6EEFF',
+  purple: '#6538FF', purpleSoft: '#EEE9FF', green: '#22C55E', greenSoft: '#E4F8EC',
   amber: '#F5A623', line: '#EAEDF3', card: '#FFFFFF',
 };
 
-// Subject thumbnail image / tint from course title (UI only). Real desktop
-// course images reused; unknown subjects fall back to a coloured emoji tile.
-let imgC: any = null, imgJava: any = null, imgPython: any = null, heroImg: any = null;
-try { imgC = require('../../assets/courses/c.jpeg'); } catch {}
-try { imgJava = require('../../assets/courses/java.jpeg'); } catch {}
-try { imgPython = require('../../assets/courses/python.jpeg'); } catch {}
-try { heroImg = require('../../assets/courses/courses-hero.png'); } catch {}
-
-// Vector banners (exact desktop SVGs) for the non-image subjects. Rendered as
-// components via react-native-svg-transformer so any future course reuses them.
-import DsaBanner from '../../assets/courses/dsa-banner.svg';
-import WebBanner from '../../assets/courses/web-banner.svg';
-import RoboticsBanner from '../../assets/courses/robotics-banner.svg';
-import AiBanner from '../../assets/courses/ai-banner.svg';
-import ProblemBanner from '../../assets/courses/problem-banner.svg';
-
-// Course card visual: prefer the real image (C/Java/Python jpeg), else the
-// desktop SVG banner (DSA/Web/Robotics/AI/Problem Solving), else a coloured
-// emoji tile. Mirrors the desktop getSubjectTheme mapping exactly.
-function courseThumb(title: string): { img?: any; Svg?: FC<any>; icon: string; tint: string } {
-  const t = (title || '').toLowerCase().trim();
-  if (t.includes('python')) return { img: imgPython, icon: '🐍', tint: '#E4EEF7' };
-  if (t.includes('java') && !t.includes('javascript')) return { img: imgJava, icon: '☕', tint: '#FDE7E7' };
-  if (t === 'c' || t.startsWith('c ') || t.includes('c programming')) return { img: imgC, icon: 'C', tint: '#E4F8EC' };
-  if (t.includes('dsa') || t.includes('data structure') || t.includes('algorithm')) return { Svg: DsaBanner, icon: '🧩', tint: '#EEE9FF' };
-  if (t.includes('web') || t.includes('html')) return { Svg: WebBanner, icon: '🌐', tint: '#E4F1FB' };
-  if (t.includes('robot')) return { Svg: RoboticsBanner, icon: '🤖', tint: '#EAECEF' };
-  if (t.includes('artificial') || t === 'ai' || t.startsWith('ai ') || t.includes(' ai') || t.includes('intelligence') || t.includes('machine learning')) return { Svg: AiBanner, icon: '🧠', tint: '#FCE4F1' };
-  if (t.includes('problem')) return { Svg: ProblemBanner, icon: '💡', tint: '#E4F8EC' };
-  if (t.includes('scratch') || t.includes('game') || t.includes('kid')) return { img: null, icon: '🎮', tint: '#FFF3DC' };
-  return { img: null, icon: '📘', tint: L.purpleSoft };
+// Category → small leading icon (visual only, matches the reference chips).
+function categoryIcon(cat: string): string {
+  const c = (cat || '').toLowerCase();
+  if (c === 'all') return '▦';
+  if (c.includes('program')) return '</>';
+  if (c.includes('general')) return '📖';
+  if (c.includes('dsa') || c.includes('data structure') || c.includes('algorithm')) return '🔗';
+  if (c.includes('web')) return '🌐';
+  if (c.includes('ai') || c.includes('intelligence') || c.includes('machine')) return '🤖';
+  if (c.includes('robot')) return '🤖';
+  if (c.includes('problem')) return '💡';
+  return '📚';
 }
 
 export default function CoursesScreen() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
+  const [searchFocused, setSearchFocused] = useState(false);
   const { data, isLoading } = useCourses(category, search);
   const courses = data?.courses ?? [];
 
@@ -95,26 +83,26 @@ export default function CoursesScreen() {
           <Text style={styles.tagline}>Learn  •  Practice  •  Grow</Text>
         </View>
         <View style={styles.topActions}>
-          <TouchableOpacity style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7} accessibilityLabel="Coins">
+          <AnimatedPressable style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} haptic accessibilityLabel="Coins">
             <Text style={styles.coinTxt}>🪙 {totalCoins}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={refreshAll} disabled={refreshing} activeOpacity={0.7}>
+          </AnimatedPressable>
+          <AnimatedPressable style={styles.iconBtn} onPress={refreshAll} disabled={refreshing}>
             <Animated.Text style={{ transform: [{ rotate: spin }] }}>🔄</Animated.Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications"><Text>🔔</Text></TouchableOpacity>
+          </AnimatedPressable>
+          <AnimatedPressable style={styles.iconBtn} onPress={() => router.push('/notifications')} accessibilityLabel="Notifications"><Text>🔔</Text></AnimatedPressable>
         </View>
       </View>
 
       {/* Fixed Header Section (does not scroll) */}
       <View>
         {/* Page Header */}
-        <View style={styles.pageHeader}>
+        <Reanimated.View entering={FadeInDown.delay(EnterDelay.header).duration(Duration.normal)} style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Explore Courses</Text>
           <Text style={styles.pageSubtitle}>Learn from expert-led courses and level up your skills.</Text>
-        </View>
+        </Reanimated.View>
 
         {/* Promo banner — hero image fills the whole card, text overlaid on top */}
-        <View style={styles.promoWrap}>
+        <Reanimated.View entering={FadeInDown.delay(EnterDelay.hero).duration(Duration.slow)} style={styles.promoWrap}>
           <ImageBackground
             source={heroImg}
             style={styles.promo}
@@ -126,10 +114,10 @@ export default function CoursesScreen() {
               <Text style={styles.promoTitle2}>Without Limits</Text>
             </View>
           </ImageBackground>
-        </View>
+        </Reanimated.View>
 
         {/* Search */}
-        <View style={styles.searchWrap}>
+        <Reanimated.View entering={FadeInDown.delay(EnterDelay.stats).duration(Duration.normal)} style={[styles.searchWrap, searchFocused && styles.searchWrapFocused]}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
             style={styles.searchInput}
@@ -137,8 +125,13 @@ export default function CoursesScreen() {
             placeholderTextColor={L.sub}
             value={search}
             onChangeText={setSearch}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
           />
-        </View>
+          <View style={styles.searchFilterBtn}>
+            <Text style={styles.searchFilterIcon}>⚙︎</Text>
+          </View>
+        </Reanimated.View>
 
         {/* Category Filter */}
         <FlatList
@@ -147,21 +140,42 @@ export default function CoursesScreen() {
           keyExtractor={(item) => item}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.categoryList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.filterTab, category === item && styles.filterTabActive]}
-              onPress={() => setCategory(item)}
-            >
-              <Text style={[styles.filterTabText, category === item && styles.filterTabTextActive]}>
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
+          renderItem={({ item }) => {
+            const active = category === item;
+            return (
+              <AnimatedPressable
+                style={[styles.filterTab, active && styles.filterTabActive]}
+                onPress={() => setCategory(item)}
+                haptic
+              >
+                <Text style={[styles.filterTabIcon, active && styles.filterTabIconActive]}>{categoryIcon(item)}</Text>
+                <Text style={[styles.filterTabText, active && styles.filterTabTextActive]}>
+                  {item}
+                </Text>
+              </AnimatedPressable>
+            );
+          }}
         />
+
+        {/* Section label above the grid (matches the reference) */}
+        <Reanimated.View entering={FadeInDown.delay(EnterDelay.primary).duration(Duration.normal)} style={styles.sectionRow}>
+          <Text style={styles.sectionTitle}>🔥 {category === 'All' ? 'Popular Courses' : category}</Text>
+        </Reanimated.View>
       </View>
 
       {/* Courses Grid (scrolls independently below fixed header) */}
-      <FlatList
+      {isLoading && courses.length === 0 ? (
+        // Premium skeleton grid while loading (resembles the CourseCard layout)
+        <View style={styles.list}>
+          {[0, 1, 2, 3].map((r) => (
+            <View key={r} style={styles.row}>
+              <CourseSkeletonCard />
+              <CourseSkeletonCard />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <FlatList
           style={styles.grid}
           data={gridData}
           keyExtractor={(item) => item.id}
@@ -170,85 +184,28 @@ export default function CoursesScreen() {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>{isLoading ? 'Loading all courses...' : 'No courses found.'}</Text>
-            </View>
+            <Reanimated.View entering={FadeIn.duration(Duration.normal)} style={styles.emptyWrap}>
+              <Text style={styles.emptyEmoji}>🔍</Text>
+              <Text style={styles.emptyTitle}>No courses found</Text>
+              <Text style={styles.emptyText}>Try a different search or category.</Text>
+            </Reanimated.View>
           }
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
             // Invisible placeholder for even grid
             if (item._placeholder) {
               return <View style={[styles.courseCard, { opacity: 0 }]} />;
             }
-
-            const th = courseThumb(item.title || '');
             return (
-              <TouchableOpacity
-                style={styles.courseCard}
-                onPress={() => router.push(`/course/${item.id}`)}
-                activeOpacity={0.9}
+              <Reanimated.View
+                entering={FadeInDown.delay(Math.min(index, 6) * 60).duration(Duration.slow)}
+                style={styles.cardWrap}
               >
-                {/* Thumbnail — real subject image (C/Java/Python), desktop SVG
-                    banner (DSA/Web/Robotics/AI/Problem), else coloured emoji tile */}
-                <View style={[styles.thumb, { backgroundColor: th.tint }]}>
-                  {th.img ? (
-                    <Image source={th.img} style={styles.thumbImg} resizeMode="cover" />
-                  ) : th.Svg ? (
-                    <th.Svg width="100%" height="100%" preserveAspectRatio="xMidYMid slice" />
-                  ) : (
-                    <Text style={styles.thumbIcon}>{th.icon}</Text>
-                  )}
-                  {item.category ? (
-                    <View style={styles.categoryBadge}>
-                      <Text style={styles.categoryBadgeText}>{item.category}</Text>
-                    </View>
-                  ) : null}
-                </View>
-
-                {/* Body */}
-                <View style={styles.cardBody}>
-                  <Text style={styles.courseTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={styles.courseSubtitle} numberOfLines={1}>{item.subtitle}</Text>
-
-                  {/* Meta chips — real backend values (Lessons · Duration · Students),
-                      computed with the same fallbacks as the desktop course card. */}
-                  {(() => {
-                    const lessons = courseLessonCount(item);
-                    const duration = formatCourseDuration(item.totalDurationSeconds);
-                    const students = courseStudents(item);
-                    return (
-                      <View style={styles.metaRow}>
-                        {lessons > 0 ? (
-                          <Text style={styles.metaChip} numberOfLines={1}>📖 {lessons} Lesson{lessons > 1 ? 's' : ''}</Text>
-                        ) : null}
-                        {duration ? (
-                          <Text style={styles.metaChip} numberOfLines={1}>⏱ {duration}</Text>
-                        ) : null}
-                        {students > 0 ? (
-                          <Text style={styles.metaChip} numberOfLines={1}>👥 {students} Students</Text>
-                        ) : null}
-                      </View>
-                    );
-                  })()}
-
-                  <View style={styles.cardFooter}>
-                    <Text style={styles.rating}>⭐ {item.rating || '4.5'}</Text>
-                    <View style={[
-                      styles.priceBadge,
-                      { backgroundColor: item.isFree ? L.greenSoft : L.purpleSoft }
-                    ]}>
-                      <Text style={[
-                        styles.priceText,
-                        { color: item.isFree ? L.green : L.purple }
-                      ]}>
-                        {item.isFree ? 'Free' : 'Pro'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </TouchableOpacity>
+                <CourseCard course={item} onPress={() => router.push(`/course/${item.id}`)} />
+              </Reanimated.View>
             );
           }}
         />
+      )}
 
       {/* Coins Modal — same shared modal as Dashboard (consistent behaviour) */}
       <CoinsModal visible={coinsModalVisible} onClose={() => setCoinsModalVisible(false)} />
@@ -291,18 +248,26 @@ const styles = StyleSheet.create({
   // Search
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: 16, marginBottom: 12,
+    marginHorizontal: 16, marginBottom: 14,
     backgroundColor: L.card,
-    borderWidth: 1, borderColor: L.line,
-    borderRadius: 14, paddingHorizontal: 14,
+    borderWidth: 1.5, borderColor: L.line,
+    borderRadius: 16, paddingLeft: 14, paddingRight: 6,
+    shadowColor: '#2F3A66', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1,
   },
+  searchWrapFocused: { borderColor: L.purple, shadowOpacity: 0.1 },
   searchIcon: { fontSize: 15, marginRight: 8 },
-  searchInput: { flex: 1, paddingVertical: 12, color: L.ink, fontSize: 14 },
+  searchInput: { flex: 1, paddingVertical: 13, color: L.ink, fontSize: 14 },
+  searchFilterBtn: {
+    width: 34, height: 34, borderRadius: 10, backgroundColor: L.purpleSoft,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  searchFilterIcon: { fontSize: 15, color: L.purple },
 
   // Filter tabs
-  categoryList: { paddingHorizontal: 16, paddingBottom: 12, gap: 8, height: 46 },
+  categoryList: { paddingHorizontal: 16, paddingBottom: 12, gap: 8, height: 48 },
   filterTab: {
-    paddingHorizontal: 16, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 15, paddingVertical: 9,
     borderRadius: 50, borderWidth: 1,
     borderColor: L.line,
     backgroundColor: L.card,
@@ -310,15 +275,23 @@ const styles = StyleSheet.create({
   filterTabActive: {
     backgroundColor: L.purple,
     borderColor: L.purple,
+    shadowColor: L.purple, shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3,
   },
-  filterTabText: { color: L.sub, fontSize: 12, fontWeight: '700' },
+  filterTabIcon: { fontSize: 12, color: L.sub, fontWeight: '800' },
+  filterTabIconActive: { color: '#fff' },
+  filterTabText: { color: L.sub, fontSize: 12.5, fontWeight: '700' },
   filterTabTextActive: { color: '#fff' },
+
+  // Section label above grid
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 4 },
+  sectionTitle: { color: L.ink, fontSize: 16, fontWeight: '800' },
 
   // Course list — grid fills the remaining height below the fixed header so it
   // scrolls the full screen (not just half).
   grid: { flex: 1 },
-  list: { paddingHorizontal: 12, paddingBottom: 32, paddingTop: 8 },
-  row: { gap: 12, marginBottom: 12 },
+  list: { paddingHorizontal: 14, paddingBottom: 32, paddingTop: 4 },
+  row: { gap: 14, marginBottom: 14, alignItems: 'stretch' },
+  cardWrap: { flex: 1 },
 
   // Course card — light theme
   courseCard: {
@@ -354,5 +327,7 @@ const styles = StyleSheet.create({
   loadingWrap: { flex: 1, alignItems: 'center', paddingTop: 60 },
   loadingText: { color: L.sub },
   emptyWrap: { alignItems: 'center', paddingTop: 60 },
+  emptyEmoji: { fontSize: 40, marginBottom: 12 },
+  emptyTitle: { color: L.ink, fontSize: 16, fontWeight: '800', marginBottom: 6 },
   emptyText: { color: L.sub, fontSize: 14 },
 });

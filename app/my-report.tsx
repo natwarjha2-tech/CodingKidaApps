@@ -451,11 +451,11 @@ export default function MyReportScreen() {
                   {monthCal.cells.map((cell, idx) => {
                     if (!cell) return <View key={`pad-${idx}`} style={styles.calCellPad} />;
                     // Colour tiers (mirrors desktop): inactive / Started / Focused / On Fire.
-                    let bg = Colors.card2, borderColor = Colors.border, textColor = Colors.muted;
-                    if (cell.active && cell.intensity <= 0.3) { bg = 'rgba(124,58,237,0.20)'; borderColor = 'rgba(124,58,237,0.35)'; textColor = '#C4B5FD'; }
+                    let bg = '#F1F2F7', borderColor = Colors.border, textColor = Colors.muted;
+                    if (cell.active && cell.intensity <= 0.3) { bg = 'rgba(124,58,237,0.18)'; borderColor = 'rgba(124,58,237,0.30)'; textColor = '#6538FF'; }
                     else if (cell.active && cell.intensity <= 0.6) { bg = '#7C3AED'; borderColor = 'rgba(168,85,247,0.5)'; textColor = '#fff'; }
                     else if (cell.active) { bg = '#A855F7'; borderColor = 'rgba(236,72,153,0.5)'; textColor = '#fff'; }
-                    if (cell.isFuture) { bg = 'rgba(255,255,255,0.02)'; borderColor = 'rgba(139,92,246,0.15)'; textColor = Colors.muted; }
+                    if (cell.isFuture) { bg = '#F8F9FC'; borderColor = 'rgba(139,92,246,0.15)'; textColor = Colors.muted; }
                     return (
                       <TouchableOpacity
                         key={cell.key}
@@ -476,7 +476,7 @@ export default function MyReportScreen() {
 
                 {/* Legend */}
                 <View style={styles.calLegend}>
-                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border }]} /><Text style={styles.calLegendText}>Inactive</Text></View>
+                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#F1F2F7', borderWidth: 1, borderColor: Colors.border }]} /><Text style={styles.calLegendText}>Inactive</Text></View>
                   <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: 'rgba(124,58,237,0.35)' }]} /><Text style={styles.calLegendText}>Started</Text></View>
                   <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#7C3AED' }]} /><Text style={styles.calLegendText}>Focused</Text></View>
                   <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#A855F7' }]} /><Text style={styles.calLegendText}>On Fire</Text></View>
@@ -891,7 +891,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerActionBtn: { paddingVertical: 4, paddingHorizontal: 2 },
   content: { padding: 16 },
@@ -904,25 +904,25 @@ const styles = StyleSheet.create({
   },
   motivRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   motivIcon: { fontSize: 26 },
-  motivTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 3 },
-  motivText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
-  motivWeekBox: { backgroundColor: 'rgba(139,92,246,0.06)', borderRadius: 10, padding: 12 },
+  motivTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  motivText: { color: Colors.muted, fontSize: 12, lineHeight: 18 },
+  motivWeekBox: { backgroundColor: 'rgba(101,56,255,0.06)', borderRadius: 10, padding: 12 },
   motivWeekHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   motivWeekLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
-  motivWeekVal: { color: '#c4b5fd', fontSize: 11, fontWeight: '700' },
-  motivBarBg: { height: 5, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden' },
-  motivBarFill: { height: 5, borderRadius: 10, backgroundColor: '#8b5cf6' },
+  motivWeekVal: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
+  motivBarBg: { height: 5, backgroundColor: 'rgba(101,56,255,0.12)', borderRadius: 10, overflow: 'hidden' },
+  motivBarFill: { height: 5, borderRadius: 10, backgroundColor: Colors.primary },
 
   missionCard: {
     backgroundColor: 'rgba(251,191,36,0.05)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.15)',
     borderRadius: 14, padding: 16, marginBottom: 24,
   },
   missionLabel: { color: '#fbbf24', fontSize: 11, fontWeight: '800', letterSpacing: 0.5, marginBottom: 4 },
-  missionSub: { color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 8 },
-  missionText: { color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '700', marginBottom: 10 },
-  missionBarBg: { height: 7, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', marginBottom: 5 },
+  missionSub: { color: Colors.muted, fontSize: 11, marginBottom: 8 },
+  missionText: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 10 },
+  missionBarBg: { height: 7, backgroundColor: 'rgba(245,166,35,0.15)', borderRadius: 10, overflow: 'hidden', marginBottom: 5 },
   missionBarFill: { height: 7, borderRadius: 10, backgroundColor: '#fbbf24' },
-  missionProgressText: { color: 'rgba(255,255,255,0.35)', fontSize: 11 },
+  missionProgressText: { color: Colors.muted, fontSize: 11 },
   loadingText: { color: Colors.muted, fontSize: 14 },
 
   // Overall Progress
@@ -934,7 +934,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  overallLabel: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 16 },
+  overallLabel: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 16 },
   overallRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   progressCircle: {
     width: 64,
@@ -951,7 +951,7 @@ const styles = StyleSheet.create({
   progressBarBg: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: Colors.borderLight,
     overflow: 'hidden',
   },
   progressBarFill: {
@@ -971,13 +971,13 @@ const styles = StyleSheet.create({
   kpiIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   kpiEmoji: { fontSize: 18 },
   kpiBody: { flex: 1 },
-  kpiValue: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  kpiLabel: { color: '#cbd5e1', fontSize: 11, fontWeight: '600', marginTop: 1 },
+  kpiValue: { color: Colors.text, fontSize: 18, fontWeight: '800' },
+  kpiLabel: { color: Colors.text, fontSize: 11, fontWeight: '600', marginTop: 1 },
   kpiSub: { color: Colors.muted, fontSize: 10, marginTop: 1 },
 
   // Calendar
   calendarSection: { marginBottom: 24 },
-  calendarTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 },
+  calendarTitle: { color: Colors.text, fontSize: 15, fontWeight: '700', marginBottom: 12 },
   calendarMeta: { color: Colors.muted, fontSize: 12, marginBottom: 12 },
 
   // Monthly calendar (desktop-parity)
@@ -986,16 +986,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(139,92,246,0.06)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.12)',
     borderRadius: 10, paddingVertical: 8, paddingHorizontal: 24, marginBottom: 14, minWidth: 150,
   },
-  calActiveValue: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  calActiveValue: { color: Colors.text, fontSize: 16, fontWeight: '800' },
   calActiveDenom: { color: Colors.muted, fontSize: 11, fontWeight: '500' },
   calActiveLabel: { color: Colors.muted, fontSize: 11, marginTop: 2 },
   calBox: {
-    backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border,
     borderRadius: 14, padding: 14,
   },
-  calMonthLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center', marginBottom: 10 },
+  calMonthLabel: { color: Colors.muted, fontSize: 12, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center', marginBottom: 10 },
   calWeekRow: { flexDirection: 'row', marginBottom: 6 },
-  calWeekday: { flex: 1, textAlign: 'center', color: '#64748B', fontSize: 10, fontWeight: '600' },
+  calWeekday: { flex: 1, textAlign: 'center', color: Colors.muted, fontSize: 10, fontWeight: '600' },
   calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   calCell: {
     width: `${100 / 7}%`, aspectRatio: 1, borderRadius: 8,
@@ -1008,27 +1008,27 @@ const styles = StyleSheet.create({
   calLegend: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 14, marginTop: 14 },
   calLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   calLegendDot: { width: 9, height: 9, borderRadius: 3 },
-  calLegendText: { color: '#64748B', fontSize: 10 },
+  calLegendText: { color: Colors.muted, fontSize: 10 },
 
   // Day-detail popup
   dayOverlay: { flex: 1, backgroundColor: 'rgba(5,5,15,0.72)', alignItems: 'center', justifyContent: 'center', padding: 20 },
   dayCard: { width: '100%', maxWidth: 340, backgroundColor: Colors.bg2, borderRadius: 20, padding: 22, borderWidth: 1 },
   dayHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   dayHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  dayTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  dayClose: { width: 28, height: 28, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+  dayTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
+  dayClose: { width: 28, height: 28, borderRadius: 8, backgroundColor: Colors.cardAlt, alignItems: 'center', justifyContent: 'center' },
   dayCloseText: { color: Colors.muted, fontSize: 14, fontWeight: '700' },
   dayBadge: { fontSize: 15, fontWeight: '800', marginBottom: 12 },
   dayStatsRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  dayStat: { flex: 1, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 12, alignItems: 'center' },
-  dayStatValue: { color: '#fff', fontSize: 17, fontWeight: '800' },
+  dayStat: { flex: 1, backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border, borderRadius: 12, padding: 12, alignItems: 'center' },
+  dayStatValue: { color: Colors.text, fontSize: 17, fontWeight: '800' },
   dayStatLabel: { color: Colors.muted, fontSize: 10, marginTop: 3 },
   dayGoalHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
   dayGoalLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
   dayGoalPct: { fontSize: 11, fontWeight: '800' },
-  dayGoalTrack: { height: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
+  dayGoalTrack: { height: 8, backgroundColor: Colors.borderLight, borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
   dayGoalFill: { height: '100%', borderRadius: 10 },
-  dayMessage: { color: '#cbd5e1', fontSize: 13, lineHeight: 20 },
+  dayMessage: { color: Colors.muted, fontSize: 13, lineHeight: 20 },
 
   // Stats
   statsGrid: {
@@ -1048,12 +1048,12 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   statEmoji: { fontSize: 24, marginBottom: 8 },
-  statValue: { color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 4 },
+  statValue: { color: Colors.text, fontSize: 20, fontWeight: '800', marginBottom: 4 },
   statLabel: { color: Colors.muted, fontSize: 12 },
 
   // Section titles
-  sectionTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12 },
-  subsectionTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 10, marginTop: 12 },
+  sectionTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  subsectionTitle: { color: Colors.text, fontSize: 14, fontWeight: '600', marginBottom: 10, marginTop: 12 },
 
   // Achievements
   badgeGrid: {
@@ -1075,11 +1075,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,158,11,0.08)',
   },
   badgeCardEmoji: { fontSize: 28, marginBottom: 6 },
-  badgeCardCount: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 2 },
+  badgeCardCount: { color: Colors.text, fontSize: 22, fontWeight: '800', marginBottom: 2 },
   badgeCardLabel: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
 
   badgeDetailSection: { marginBottom: 8 },
-  badgeDetailTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 12 },
+  badgeDetailTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 12 },
   badgeDetailEmpty: { color: Colors.muted, fontSize: 13, marginBottom: 12 },
 
   achievementCard: {
@@ -1091,7 +1091,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   achievementInfo: {},
-  achievementTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  achievementTitle: { color: Colors.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   achievementMeta: { color: Colors.muted, fontSize: 12, marginBottom: 8 },
   achievementStatsRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
   achievementStatBadge: {
@@ -1114,7 +1114,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   streakSummaryEmoji: { fontSize: 32, marginBottom: 6 },
-  streakSummaryValue: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 2 },
+  streakSummaryValue: { fontSize: 28, fontWeight: '800', color: Colors.text, marginBottom: 2 },
   streakSummaryLabel: { fontSize: 13, color: Colors.muted },
 
   streakCard: {
@@ -1129,7 +1129,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   streakWeek: { color: Colors.purple, fontSize: 11, fontWeight: '700', marginBottom: 3 },
-  streakTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 2 },
+  streakTitle: { color: Colors.text, fontSize: 13, fontWeight: '600', marginBottom: 2 },
   streakCourse: { color: Colors.muted, fontSize: 11 },
   streakBadge: {
     borderRadius: 10,
@@ -1169,7 +1169,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: 8,
   },
-  txReason: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  txReason: { color: Colors.text, fontSize: 13, fontWeight: '600' },
   txSub: { color: Colors.muted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   txCoins: { fontSize: 14, fontWeight: '700' },
   txTime: { color: Colors.muted, fontSize: 11, width: 42 },
@@ -1189,7 +1189,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
-  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, marginRight: 8 },
+  courseTitle: { color: Colors.text, fontSize: 14, fontWeight: '600', flex: 1, marginRight: 8 },
   coursePercent: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
   courseMeta: { color: Colors.muted, fontSize: 12 },
   courseMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
@@ -1200,7 +1200,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: Colors.borderLight,
   },
   moduleEmpty: { color: Colors.muted, fontSize: 12, textAlign: 'center', paddingVertical: 8 },
   moduleBlock: { marginBottom: 12 },
@@ -1208,18 +1208,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6,
   },
   moduleName: {
-    color: '#c4b5fd', fontSize: 12, fontWeight: '700', flex: 1, marginRight: 8,
+    color: Colors.primary, fontSize: 12, fontWeight: '700', flex: 1, marginRight: 8,
     textTransform: 'uppercase', letterSpacing: 0.4,
   },
   moduleCount: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
   lessonRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingVertical: 6, paddingHorizontal: 8,
-    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 8, marginBottom: 4,
+    backgroundColor: Colors.cardAlt, borderRadius: 8, marginBottom: 4,
   },
   lessonCheck: { fontSize: 12, width: 18 },
-  lessonName: { color: 'rgba(255,255,255,0.7)', fontSize: 12.5, flex: 1 },
-  lessonNameDone: { color: '#fff' },
+  lessonName: { color: Colors.muted, fontSize: 12.5, flex: 1 },
+  lessonNameDone: { color: Colors.text },
   lessonDoneTag: {
     color: Colors.success, fontSize: 9.5, fontWeight: '700',
     backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
@@ -1228,6 +1228,6 @@ const styles = StyleSheet.create({
   // Empty
   emptyState: { alignItems: 'center', padding: 24 },
   emptyEmoji: { fontSize: 36, marginBottom: 12 },
-  emptyTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 6 },
+  emptyTitle: { color: Colors.text, fontSize: 15, fontWeight: '700', marginBottom: 6 },
   emptyText: { color: Colors.muted, fontSize: 13 },
 });

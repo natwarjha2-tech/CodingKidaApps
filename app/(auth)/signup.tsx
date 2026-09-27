@@ -7,6 +7,7 @@ import {
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks';
+import { Colors } from '@/theme';
 
 export default function SignupScreen() {
   const [name, setName] = useState('');
@@ -191,18 +192,18 @@ const styles = StyleSheet.create({
   blob2: { width: 250, height: 250, backgroundColor: '#4338ca', bottom: -80, right: -40, opacity: 0.35 },
   blob3: { width: 200, height: 200, backgroundColor: '#6366f1', top: '40%', right: -60, opacity: 0.25 },
   corner: { position: 'absolute', width: 32, height: 32, opacity: 0.3 },
-  cornerTL: { top: 16, left: 16, borderTopWidth: 1.5, borderLeftWidth: 1.5, borderColor: '#6366f1' },
-  cornerTR: { top: 16, right: 16, borderTopWidth: 1.5, borderRightWidth: 1.5, borderColor: '#6366f1' },
-  cornerBL: { bottom: 16, left: 16, borderBottomWidth: 1.5, borderLeftWidth: 1.5, borderColor: '#6366f1' },
-  cornerBR: { bottom: 16, right: 16, borderBottomWidth: 1.5, borderRightWidth: 1.5, borderColor: '#6366f1' },
+  cornerTL: { top: 16, left: 16, borderTopWidth: 1.5, borderLeftWidth: 1.5, borderColor: Colors.secondary },
+  cornerTR: { top: 16, right: 16, borderTopWidth: 1.5, borderRightWidth: 1.5, borderColor: Colors.secondary },
+  cornerBL: { bottom: 16, left: 16, borderBottomWidth: 1.5, borderLeftWidth: 1.5, borderColor: Colors.secondary },
+  cornerBR: { bottom: 16, right: 16, borderBottomWidth: 1.5, borderRightWidth: 1.5, borderColor: Colors.secondary },
   scroll: { padding: 24, paddingTop: 12 },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 28 },
-  logoIcon: { width: 44, height: 44, borderRadius: 10, backgroundColor: '#6d28d9', alignItems: 'center', justifyContent: 'center' },
+  logoIcon: { width: 44, height: 44, borderRadius: 10, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   logoIconText: { fontSize: 22 },
   logoText: { fontSize: 22, fontWeight: '800', color: '#fff' },
-  logoAccent: { color: '#6366f1' },
+  logoAccent: { color: Colors.secondary },
   heroTitle: { fontSize: 32, fontWeight: '800', color: '#fff', lineHeight: 40, marginBottom: 12 },
-  heroHighlight: { color: '#6366f1' },
+  heroHighlight: { color: Colors.secondary },
   heroDesc: { fontSize: 14, color: '#94a3b8', lineHeight: 22, marginBottom: 28 },
   card: { backgroundColor: '#1a1830', borderRadius: 16, padding: 28, marginBottom: 20 },
   cardTitle: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 6 },
@@ -218,12 +219,12 @@ const styles = StyleSheet.create({
   inputIcon: { paddingHorizontal: 12, fontSize: 15 },
   input: { flex: 1, paddingVertical: 13, paddingRight: 12, color: '#fff', fontSize: 14 },
   eyeBtn: { padding: 12 },
-  signupBtn: { backgroundColor: '#6d28d9', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  signupBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   btnDisabled: { opacity: 0.6 },
   signupBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   trustBar: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 20 },
   trustItem: { fontSize: 11, color: '#64748b' },
   loginRow: { flexDirection: 'row', justifyContent: 'center', paddingBottom: 16 },
   loginText: { color: '#94a3b8', fontSize: 13 },
-  loginLink: { color: '#6366f1', fontSize: 13, fontWeight: '600' },
+  loginLink: { color: Colors.secondary, fontSize: 13, fontWeight: '600' },
 });

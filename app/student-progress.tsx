@@ -201,19 +201,19 @@ export default function StudentProgressScreen() {
                       <Text style={styles.moduleTitle}>{mod.title}</Text>
                       {(mod.lessons || []).map((lesson: any) => (
                         <View key={lesson.id} style={styles.lessonItem}>
-                          <Text style={[styles.lessonIcon, { color: lesson.completed ? Colors.success : 'rgba(255,255,255,0.2)' }]}>
+                          <Text style={[styles.lessonIcon, { color: lesson.completed ? Colors.success : Colors.muted }]}>
                             {lesson.completed ? '✅' : '○'}
                           </Text>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.lessonTitle} numberOfLines={1}>{lesson.title}</Text>
                             <View style={styles.lessonBadges}>
                               {lesson.quiz.total > 0 && (
-                                <Text style={[styles.badge, { backgroundColor: lesson.quiz.accuracy != null && lesson.quiz.accuracy >= 70 ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)', color: lesson.quiz.accuracy != null && lesson.quiz.accuracy >= 70 ? '#4ade80' : '#fbbf24' }]}>
+                                <Text style={[styles.badge, { backgroundColor: lesson.quiz.accuracy != null && lesson.quiz.accuracy >= 70 ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)', color: lesson.quiz.accuracy != null && lesson.quiz.accuracy >= 70 ? Colors.success : '#B87400' }]}>
                                   Quiz: {lesson.quiz.accuracy != null ? `${lesson.quiz.accuracy}%` : 'Not taken'}
                                 </Text>
                               )}
                               {lesson.exercise.total > 0 && (
-                                <Text style={[styles.badge, { backgroundColor: lesson.exercise.passed > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: lesson.exercise.passed > 0 ? '#4ade80' : '#f87171' }]}>
+                                <Text style={[styles.badge, { backgroundColor: lesson.exercise.passed > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)', color: lesson.exercise.passed > 0 ? Colors.success : Colors.danger }]}>
                                   Ex: {lesson.exercise.passed}/{lesson.exercise.total}
                                 </Text>
                               )}
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   loadingState: { alignItems: 'center', padding: 60, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
@@ -266,55 +266,55 @@ const styles = StyleSheet.create({
 
   // Overall Card
   overallCard: {
-    backgroundColor: 'rgba(108,71,255,0.1)', borderRadius: 20, padding: 20,
-    marginBottom: 20, borderWidth: 1, borderColor: 'rgba(108,71,255,0.3)',
+    backgroundColor: Colors.primaryLight, borderRadius: 20, padding: 20,
+    marginBottom: 20, borderWidth: 1, borderColor: 'rgba(101,56,255,0.25)',
   },
   overallLabel: { fontSize: 10, color: Colors.muted, fontWeight: '700', letterSpacing: 0.5, marginBottom: 8 },
   overallRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   starsRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   starsText: { fontSize: 18, color: '#fbbf24' },
-  ratingValue: { fontSize: 22, fontWeight: '800', color: '#fff' },
+  ratingValue: { fontSize: 22, fontWeight: '800', color: Colors.text },
   overallMeta: { fontSize: 11, color: Colors.muted, lineHeight: 16 },
   // Prominent Learning Score (mirrors desktop hero score)
   learningScoreBlock: { marginTop: 12 },
   learningScoreLabel: { fontSize: 10, fontWeight: '700', color: Colors.muted, letterSpacing: 0.6, marginBottom: 2 },
-  learningScoreValue: { fontSize: 34, fontWeight: '800', color: '#a78bfa', lineHeight: 38, marginBottom: 8 },
-  learningScoreTrack: { height: 8, borderRadius: 50, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
-  learningScoreFill: { height: '100%', borderRadius: 50, backgroundColor: '#8b5cf6' },
+  learningScoreValue: { fontSize: 34, fontWeight: '800', color: Colors.primary, lineHeight: 38, marginBottom: 8 },
+  learningScoreTrack: { height: 8, borderRadius: 50, backgroundColor: 'rgba(101,56,255,0.12)', overflow: 'hidden' },
+  learningScoreFill: { height: '100%', borderRadius: 50, backgroundColor: Colors.primary },
   learningScoreHint: { fontSize: 11, color: Colors.muted, marginTop: 8 },
   overallStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' },
-  miniStat: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10, alignItems: 'center', minWidth: 54 },
-  miniStatXp: { backgroundColor: 'rgba(236,72,153,0.1)', borderWidth: 1, borderColor: 'rgba(236,72,153,0.25)' },
-  miniStatValue: { fontSize: 14, fontWeight: '800', color: '#fff', marginBottom: 2 },
+  miniStat: { backgroundColor: Colors.card, borderRadius: 12, padding: 10, alignItems: 'center', minWidth: 54, borderWidth: 1, borderColor: Colors.border },
+  miniStatXp: { backgroundColor: 'rgba(236,72,153,0.08)', borderWidth: 1, borderColor: 'rgba(236,72,153,0.2)' },
+  miniStatValue: { fontSize: 14, fontWeight: '800', color: Colors.text, marginBottom: 2 },
   miniStatLabel: { fontSize: 9, color: Colors.muted },
   perfPill: {
     alignSelf: 'flex-start', marginTop: 10,
-    backgroundColor: 'rgba(139,92,246,0.15)', borderWidth: 1, borderColor: 'rgba(139,92,246,0.3)',
+    backgroundColor: 'rgba(101,56,255,0.1)', borderWidth: 1, borderColor: 'rgba(101,56,255,0.25)',
     borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4,
   },
-  perfPillText: { fontSize: 11, fontWeight: '700', color: '#c4b5fd' },
+  perfPillText: { fontSize: 11, fontWeight: '700', color: Colors.primary },
   tapHint: { color: Colors.muted, fontSize: 10, textAlign: 'center', marginTop: 10 },
 
   // Breakdown
-  breakdownSection: { flexDirection: 'row', gap: 10, marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)' },
-  breakdownCard: { flex: 1, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  breakdownTitle: { fontSize: 13, fontWeight: '700', color: '#fff', marginBottom: 6 },
+  breakdownSection: { flexDirection: 'row', gap: 10, marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(101,56,255,0.12)' },
+  breakdownCard: { flex: 1, backgroundColor: Colors.card, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: Colors.border },
+  breakdownTitle: { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 6 },
   breakdownStars: { fontSize: 12, color: '#fbbf24', marginBottom: 6 },
   breakdownMeta: { fontSize: 11, color: Colors.muted, lineHeight: 18 },
 
   // Section
-  sectionTitle: { fontSize: 16, fontWeight: '800', color: '#fff', marginBottom: 14 },
+  sectionTitle: { fontSize: 16, fontWeight: '800', color: Colors.text, marginBottom: 14 },
   emptyState: { alignItems: 'center', padding: 40 },
   emptyText: { color: Colors.muted, fontSize: 13, textAlign: 'center' },
 
   // Course Card
   courseCard: {
-    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16,
-    marginBottom: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', overflow: 'hidden',
+    backgroundColor: Colors.card2, borderRadius: 16,
+    marginBottom: 14, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden',
   },
   courseHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
   courseIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  courseTitle: { fontSize: 14, fontWeight: '700', color: '#fff', marginBottom: 3 },
+  courseTitle: { fontSize: 14, fontWeight: '700', color: Colors.text, marginBottom: 3 },
   courseMeta: { fontSize: 11, color: Colors.muted },
   chevron: { color: Colors.muted, fontSize: 12 },
 
@@ -322,7 +322,7 @@ const styles = StyleSheet.create({
   courseContent: { paddingHorizontal: 16, paddingBottom: 16 },
   courseStatsRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   courseStat: { flex: 1, borderRadius: 10, padding: 12, alignItems: 'center' },
-  courseStatValue: { fontSize: 14, fontWeight: '800', color: '#fff', marginBottom: 2 },
+  courseStatValue: { fontSize: 14, fontWeight: '800', color: Colors.text, marginBottom: 2 },
   courseStatLabel: { fontSize: 9, color: Colors.muted },
 
   // Module
@@ -332,11 +332,11 @@ const styles = StyleSheet.create({
   // Lesson
   lessonItem: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    padding: 10, backgroundColor: 'rgba(255,255,255,0.02)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', borderRadius: 10, marginBottom: 6,
+    padding: 10, backgroundColor: Colors.cardAlt,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: 10, marginBottom: 6,
   },
   lessonIcon: { fontSize: 14 },
-  lessonTitle: { fontSize: 12, fontWeight: '600', color: '#fff', marginBottom: 4 },
+  lessonTitle: { fontSize: 12, fontWeight: '600', color: Colors.text, marginBottom: 4 },
   lessonBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   badge: { fontSize: 10, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden', fontWeight: '600' },
   lessonDuration: { fontSize: 10, color: Colors.muted },

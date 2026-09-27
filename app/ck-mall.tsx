@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   loadingState: { alignItems: 'center', padding: 60, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
   // Redemption history
   historySub: { color: Colors.muted, fontSize: 12, marginTop: 4, marginBottom: 14 },
   historyEmpty: {
-    backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: Colors.cardAlt, borderWidth: 1, borderColor: Colors.border,
     borderStyle: 'dashed', borderRadius: 14, padding: 22, alignItems: 'center',
   },
   historyEmptyText: { color: Colors.muted, fontSize: 13, textAlign: 'center' },
@@ -322,7 +322,7 @@ const styles = StyleSheet.create({
   },
   historyItemActive: { borderColor: 'rgba(34,197,94,0.35)' },
   historyIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  historyTitle: { color: '#fff', fontSize: 13.5, fontWeight: '700' },
+  historyTitle: { color: Colors.text, fontSize: 13.5, fontWeight: '700' },
   historyMeta: { color: Colors.muted, fontSize: 11, marginTop: 2 },
   historyAmt: { fontSize: 15, fontWeight: '800' },
   historyBadge: {
@@ -336,13 +336,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card2, borderRadius: 16, padding: 18,
     marginBottom: 20, borderWidth: 1, borderColor: Colors.border,
   },
-  couponTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  couponTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 4 },
   couponSub: { color: Colors.muted, fontSize: 11.5, marginBottom: 12, lineHeight: 16 },
   couponRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
   couponInput: {
-    flex: 1, minWidth: 0, backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 12, color: '#fff', fontSize: 13,
+    flex: 1, minWidth: 0, backgroundColor: Colors.cardAlt,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 12, color: Colors.text, fontSize: 13,
     textTransform: 'uppercase',
   },
   couponBtn: {
@@ -353,20 +353,20 @@ const styles = StyleSheet.create({
   couponMsg: { marginTop: 8, fontSize: 12, fontWeight: '600' },
 
   // Offers
-  sectionTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 14 },
+  sectionTitle: { color: Colors.text, fontSize: 15, fontWeight: '700', marginBottom: 14 },
   offersGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   offerCard: {
     width: '47%', backgroundColor: Colors.card2, borderRadius: 16, padding: 16,
     borderWidth: 1, borderColor: Colors.border,
   },
   offerIcon: { fontSize: 28, marginBottom: 8 },
-  offerTitle: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  offerTitle: { color: Colors.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   offerDesc: { color: Colors.muted, fontSize: 11, marginBottom: 12, lineHeight: 16 },
   redeemBtn: {
     backgroundColor: '#f59e0b',
     borderRadius: 8, paddingVertical: 10, alignItems: 'center',
   },
-  redeemBtnDisabled: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  redeemBtnDisabled: { backgroundColor: Colors.borderLight },
   redeemBtnText: { color: '#000', fontSize: 12, fontWeight: '700' },
   redeemBtnTextDisabled: { color: Colors.muted },
 });

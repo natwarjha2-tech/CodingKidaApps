@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   summaryCard: {
     alignItems: 'center',
@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   summaryEmoji: { fontSize: 40, marginBottom: 8 },
-  summaryValue: { fontSize: 36, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  summaryValue: { fontSize: 36, fontWeight: '800', color: Colors.text, marginBottom: 4 },
   summaryLabel: { fontSize: 14, color: Colors.muted },
   loadingState: { alignItems: 'center', padding: 40, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   },
   streakLeft: { flex: 1 },
   weekBadge: { color: Colors.purple, fontSize: 11, fontWeight: '700', marginBottom: 4 },
-  streakTitle: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 2 },
+  streakTitle: { color: Colors.text, fontSize: 14, fontWeight: '600', marginBottom: 2 },
   streakCourse: { color: Colors.muted, fontSize: 12 },
   statusBadge: {
     borderRadius: 10,

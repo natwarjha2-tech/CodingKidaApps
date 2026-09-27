@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
 
   // Banner
@@ -193,10 +193,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.3)',
+    borderColor: Colors.success,
   },
   bannerEmoji: { fontSize: 40, marginBottom: 12 },
-  bannerTitle: { color: '#fff', fontSize: 18, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
+  bannerTitle: { color: Colors.text, fontSize: 18, fontWeight: '800', marginBottom: 8, textAlign: 'center' },
   bannerText: { color: Colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
 
   // Code Card
@@ -211,48 +211,48 @@ const styles = StyleSheet.create({
   },
   codeLabel: { color: Colors.muted, fontSize: 13, marginBottom: 12 },
   codeBox: {
-    backgroundColor: 'rgba(108,71,255,0.12)',
+    backgroundColor: Colors.primaryLight,
     borderRadius: 12,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderWidth: 1,
-    borderColor: 'rgba(108,71,255,0.3)',
+    borderColor: Colors.primary,
     marginBottom: 16,
   },
   codeText: { color: Colors.primary, fontSize: 22, fontWeight: '800', letterSpacing: 2 },
 
   // Apply a friend's code
   applyCard: { backgroundColor: Colors.card2, borderRadius: 16, padding: 18, marginBottom: 24, borderWidth: 1, borderColor: Colors.border },
-  applyTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  applyTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 4 },
   applySub: { color: Colors.muted, fontSize: 11.5, marginBottom: 12, lineHeight: 16 },
   applyRow: { flexDirection: 'row', gap: 10 },
   applyInput: {
-    flex: 1, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14, textTransform: 'uppercase',
+    flex: 1, backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, color: Colors.text, fontSize: 14, textTransform: 'uppercase',
   },
   applyBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingHorizontal: 20, justifyContent: 'center', alignItems: 'center' },
-  applyBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  applyBtnText: { color: Colors.white, fontSize: 14, fontWeight: '700' },
   applyMsg: { marginTop: 8, fontSize: 12, fontWeight: '600' },
   codeActions: { flexDirection: 'row', gap: 12 },
   copyBtn: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: Colors.cardAlt,
     borderRadius: 10,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  copyBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  copyBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
   shareBtn: {
     backgroundColor: Colors.primary,
     borderRadius: 10,
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
-  shareBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  shareBtnText: { color: Colors.white, fontSize: 14, fontWeight: '600' },
 
   // Steps
-  sectionTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  sectionTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 12 },
   stepCard: {
     flexDirection: 'row',
     backgroundColor: Colors.card2,
@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
   stepContent: { flex: 1 },
   stepHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   stepEmoji: { fontSize: 16 },
-  stepTitle: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  stepTitle: { color: Colors.text, fontSize: 14, fontWeight: '600' },
   stepDesc: { color: Colors.muted, fontSize: 12, lineHeight: 18 },
 
   // Stats
@@ -290,6 +290,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  statValue: { color: '#fff', fontSize: 24, fontWeight: '800', marginBottom: 4 },
+  statValue: { color: Colors.text, fontSize: 24, fontWeight: '800', marginBottom: 4 },
   statLabel: { color: Colors.muted, fontSize: 12 },
 });

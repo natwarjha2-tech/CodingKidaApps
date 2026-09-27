@@ -318,10 +318,10 @@ const styles = StyleSheet.create({
 
   heroRow: { alignItems: 'center', marginBottom: 8 },
   heroTitle: { fontSize: 30, fontWeight: '800', color: '#fff' },
-  heroAccent: { color: '#7c3aed', fontWeight: '800' },
+  heroAccent: { color: Colors.primary, fontWeight: '800' },
 
   subtitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 24, gap: 8 },
-  subtitleDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#7c3aed' },
+  subtitleDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.primary },
   subtitleText: { color: '#94a3b8', fontSize: 14 },
 
   card: {
@@ -344,15 +344,15 @@ const styles = StyleSheet.create({
   rememberRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 18, gap: 10 },
   checkbox: {
     width: 20, height: 20, borderRadius: 5,
-    borderWidth: 2, borderColor: '#7c3aed',
+    borderWidth: 2, borderColor: Colors.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  checkboxChecked: { backgroundColor: '#7c3aed' },
+  checkboxChecked: { backgroundColor: Colors.primary },
   checkmark: { color: '#fff', fontSize: 12, fontWeight: '700' },
   rememberText: { color: '#94a3b8', fontSize: 13 },
 
   loginBtn: {
-    backgroundColor: '#7c3aed', borderRadius: 10,
+    backgroundColor: Colors.primary, borderRadius: 10,
     paddingVertical: 15, alignItems: 'center', marginTop: 4,
   },
   loginBtnDisabled: { opacity: 0.6 },
@@ -363,10 +363,10 @@ const styles = StyleSheet.create({
 
   otpHint: { color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 16 },
   otpToggleRow: { alignItems: 'center', marginTop: 6 },
-  otpToggleText: { color: '#a78bfa', fontSize: 13, fontWeight: '700' },
+  otpToggleText: { color: Colors.purple, fontSize: 13, fontWeight: '700' },
   otpMsg: { fontSize: 12, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
 
   signupRow: { flexDirection: 'row', justifyContent: 'center', paddingBottom: 16 },
   signupText: { color: '#94a3b8', fontSize: 13 },
-  signupLink: { color: '#6366f1', fontSize: 13, fontWeight: '600' },
+  signupLink: { color: Colors.secondary, fontSize: 13, fontWeight: '600' },
 });

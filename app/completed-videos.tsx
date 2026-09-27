@@ -107,7 +107,7 @@ export default function CompletedVideosScreen() {
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <View style={styles.courseTitleRow}>
                           <Text style={styles.courseTitle} numberOfLines={1}>{course.title}</Text>
-                          <Text style={[styles.statusLabel, { color: isComplete ? Colors.success : '#6ee7b7' }]}>{statusLabel}</Text>
+                          <Text style={[styles.statusLabel, { color: isComplete ? Colors.success : Colors.primary }]}>{statusLabel}</Text>
                         </View>
                         <Text style={styles.courseMeta}>{course.completedLessons} of {course.totalLessons} lessons completed</Text>
                       </View>
@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   summaryCard: {
     alignItems: 'center',
@@ -213,13 +213,13 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   summaryEmoji: { fontSize: 40, marginBottom: 8 },
-  summaryValue: { fontSize: 36, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  summaryValue: { fontSize: 36, fontWeight: '800', color: Colors.text, marginBottom: 4 },
   summaryLabel: { fontSize: 14, color: Colors.muted, textAlign: 'center' },
   loadingCard: { alignItems: 'center', padding: 40 },
   loadingText: { color: Colors.muted, fontSize: 14 },
   emptyState: { alignItems: 'center', padding: 40 },
   emptyText: { color: Colors.muted, fontSize: 14 },
-  sectionTitle: { color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 },
+  sectionTitle: { color: Colors.text, fontSize: 15, fontWeight: '700', marginBottom: 12 },
   courseCard: {
     backgroundColor: Colors.card2,
     borderRadius: 16,
@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#4C26A8',
+    backgroundColor: Colors.primaryLight,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -249,52 +249,52 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(108,71,255,0.4)',
+    backgroundColor: Colors.primaryGlow,
   },
   courseIcon: { fontSize: 22, zIndex: 1 },
   courseTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 3 },
-  courseTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  courseTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', flexShrink: 1 },
   courseMeta: { color: Colors.muted, fontSize: 12 },
   percent: { fontSize: 16, fontWeight: '800' },
   // Completion ring (percentage circle — no SVG dependency)
   ring: {
     width: 52, height: 52, borderRadius: 26,
     borderWidth: 3, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: Colors.cardAlt,
   },
   ringPct: { fontSize: 13, fontWeight: '800' },
   statusLabel: { fontSize: 10, fontWeight: '700' },
   courseFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  motivational: { color: '#6ee7b7', fontSize: 11, fontWeight: '500', flexShrink: 1 },
+  motivational: { color: Colors.success, fontSize: 11, fontWeight: '500', flexShrink: 1 },
   watchAgain: { color: Colors.success, fontSize: 12, fontWeight: '700' },
   chevron: { color: Colors.muted, fontSize: 10, marginLeft: 8 },
 
   // Dropdown: modules → completed lessons
-  moduleDropdown: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' },
+  moduleDropdown: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.borderLight },
   moduleEmpty: { color: Colors.muted, fontSize: 12, textAlign: 'center', paddingVertical: 8 },
   moduleBlock: { marginBottom: 12 },
   moduleHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   moduleName: {
-    color: '#c4b5fd', fontSize: 12, fontWeight: '700', flex: 1, marginRight: 8,
+    color: Colors.primary, fontSize: 12, fontWeight: '700', flex: 1, marginRight: 8,
     textTransform: 'uppercase', letterSpacing: 0.4,
   },
   moduleCount: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
   lessonRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingVertical: 6, paddingHorizontal: 8,
-    backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 8, marginBottom: 4,
+    backgroundColor: Colors.cardAlt, borderRadius: 8, marginBottom: 4,
   },
   lessonCheck: { fontSize: 12, width: 18 },
-  lessonName: { color: 'rgba(255,255,255,0.7)', fontSize: 12.5 },
-  lessonNameDone: { color: '#fff' },
+  lessonName: { color: Colors.muted, fontSize: 12.5 },
+  lessonNameDone: { color: Colors.text },
   lessonDur: { color: Colors.muted, fontSize: 10.5, marginTop: 1 },
   lessonDoneTag: {
     color: Colors.success, fontSize: 9.5, fontWeight: '700',
-    backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+    backgroundColor: Colors.successLight, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
   },
   progressBar: {
     height: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: Colors.borderLight,
     borderRadius: 50,
     overflow: 'hidden',
   },

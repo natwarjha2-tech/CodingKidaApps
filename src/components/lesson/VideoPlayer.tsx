@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  placeholder: { width: '100%', aspectRatio: 16 / 9, backgroundColor: Colors.card, alignItems: 'center', justifyContent: 'center' },
+  placeholder: { width: '100%', aspectRatio: 16 / 9, backgroundColor: Colors.videoBg, alignItems: 'center', justifyContent: 'center' },
   phTitle: { color: '#fff', fontSize: Typography.base, fontWeight: FontWeight.bold, marginTop: 8 },
   phMeta: { color: Colors.muted, fontSize: Typography.xs, marginTop: 4 },
 

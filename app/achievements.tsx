@@ -120,13 +120,13 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   loadingState: { alignItems: 'center', padding: 60, gap: 12 },
   loadingText: { color: Colors.muted, fontSize: 14 },
   emptyState: { alignItems: 'center', padding: 60 },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  emptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
   emptyText: { color: Colors.muted, fontSize: 14 },
   achievementCard: {
     flexDirection: 'row',
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   },
   badgeEmoji: { fontSize: 26 },
   achievementInfo: { flex: 1 },
-  achievementTitle: { color: '#fff', fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  achievementTitle: { color: Colors.text, fontSize: 14, fontWeight: '700', marginBottom: 4 },
   achievementMeta: { color: Colors.muted, fontSize: 12, marginBottom: 8 },
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
   statBadge: {
@@ -166,5 +166,5 @@ const styles = StyleSheet.create({
   },
   countBadgeText: { color: '#fbbf24', fontSize: 12, fontWeight: '700' },
   metaLine: { color: Colors.muted, fontSize: 11, lineHeight: 17 },
-  metaHighlight: { color: '#fff', fontWeight: '600' },
+  metaHighlight: { color: Colors.text, fontWeight: '600' },
 });

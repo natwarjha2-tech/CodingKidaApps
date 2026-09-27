@@ -105,23 +105,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   content: { padding: 16 },
   card: {
     backgroundColor: Colors.card2, borderRadius: 16, padding: 20,
     borderWidth: 1, borderColor: Colors.border,
   },
-  cardTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 4 },
+  cardTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 4 },
   cardSubtitle: { color: Colors.muted, fontSize: 13, marginBottom: 20 },
   label: { color: Colors.muted, fontSize: 12, fontWeight: '600', marginBottom: 6, marginTop: 12 },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border,
     borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    color: '#fff', fontSize: 14,
+    color: Colors.text, fontSize: 14,
   },
   submitBtn: {
     backgroundColor: Colors.primary, borderRadius: 10,
     paddingVertical: 14, alignItems: 'center', marginTop: 24,
   },
-  submitText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  submitText: { color: Colors.white, fontSize: 14, fontWeight: '700' },
 });

@@ -1,13 +1,31 @@
+import { useEffect } from 'react';
 import { Tabs, Redirect } from 'expo-router';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/store';
-import { Colors } from '@/theme';
+import { L, Spring, Duration } from '@/theme';
 
+// Premium animated tab icon: active → icon scales up + soft brand pill fades in,
+// label turns brand-coloured. One reusable animation (no per-tab duplication).
 function TabIcon({ emoji, label, focused }: { emoji: string; label: string; focused: boolean }) {
+  const scale = useSharedValue(focused ? 1 : 0.95);
+  const pill = useSharedValue(focused ? 1 : 0);
+
+  useEffect(() => {
+    scale.value = withSpring(focused ? 1 : 0.95, Spring.standard);
+    pill.value = withTiming(focused ? 1 : 0, { duration: Duration.fast });
+  }, [focused, scale, pill]);
+
+  const iconStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const pillStyle = useAnimatedStyle(() => ({ opacity: pill.value }));
+
   return (
     <View style={styles.tabIcon}>
-      <Text style={styles.emoji}>{emoji}</Text>
+      <View style={styles.iconRow}>
+        <Animated.View style={[styles.activePill, pillStyle]} />
+        <Animated.Text style={[styles.emoji, iconStyle]}>{emoji}</Animated.Text>
+      </View>
       <Text style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>{label}</Text>
     </View>
   );
@@ -29,14 +47,14 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#EEF0F5',
+          backgroundColor: L.surface,
+          borderTopColor: L.borderSoft,
           height: 60 + bottomPadding,
           paddingBottom: bottomPadding,
           paddingTop: 6,
         },
-        tabBarActiveTintColor: '#7A3BFF',
-        tabBarInactiveTintColor: '#8A90A2',
+        tabBarActiveTintColor: L.primary,
+        tabBarInactiveTintColor: L.textMuted,
       }}
     >
       <Tabs.Screen
@@ -72,8 +90,13 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
-  tabIcon: { alignItems: 'center', justifyContent: 'center', paddingTop: 2, width: 60 },
+  tabIcon: { alignItems: 'center', justifyContent: 'center', paddingTop: 2, width: 64 },
+  iconRow: { alignItems: 'center', justifyContent: 'center', height: 30, width: 44 },
+  activePill: {
+    position: 'absolute', width: 44, height: 28, borderRadius: 14,
+    backgroundColor: L.primaryLight,
+  },
   emoji: { fontSize: 20 },
-  label: { fontSize: 10, marginTop: 2, color: '#8A90A2', textAlign: 'center' },
-  labelActive: { color: '#7A3BFF', fontWeight: '700' },
+  label: { fontSize: 10, marginTop: 2, color: L.textMuted, textAlign: 'center' },
+  labelActive: { color: L.primary, fontWeight: '700' },
 });

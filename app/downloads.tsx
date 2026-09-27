@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  headerTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   headerCount: { color: Colors.muted, fontSize: 13, fontWeight: '600', backgroundColor: Colors.card, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   content: { padding: 16 },
 
@@ -190,14 +190,14 @@ const styles = StyleSheet.create({
   loadingText: { color: Colors.muted, fontSize: 14 },
   emptyState: { alignItems: 'center', padding: 60 },
   emptyEmoji: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  emptyTitle: { color: Colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
   emptyText: { color: Colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
 
   // Course
   courseSection: { marginBottom: 24 },
   courseHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   courseIcon: { fontSize: 18 },
-  courseTitle: { color: '#fff', fontSize: 15, fontWeight: '700', flex: 1 },
+  courseTitle: { color: Colors.text, fontSize: 15, fontWeight: '700', flex: 1 },
 
   // Module
   moduleSection: { marginLeft: 12, marginBottom: 12 },
@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
   itemIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   itemIconText: { fontSize: 18 },
   itemInfo: { flex: 1 },
-  itemTitle: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 4 },
+  itemTitle: { color: Colors.text, fontSize: 13, fontWeight: '600', marginBottom: 4 },
   itemMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, rowGap: 4 },
   itemType: { color: Colors.muted, fontSize: 11 },
   itemQuality: {

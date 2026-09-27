@@ -42,24 +42,25 @@ function getIcon(type: string): string {
   }
 }
 
+// Soft light tints for the notification icon container (light theme).
 function getIconBg(type: string): string {
   switch (type) {
-    case 'course_enrolled':    return '#14532d';
-    case 'payment_failed':     return '#450a0a';
-    case 'new_course':         return '#2e1065';
-    case 'achievement':        return '#451a03';
-    case 'weekly_streak':      return '#431407';
-    case 'leaderboard_winner': return '#451a03';
-    case 'app_update':         return '#172554';
-    case 'coins_earned':       return '#451a03';
-    case 'coins_spent':        return '#2e1065';
-    case 'badge_lost':         return '#172554';
-    case 'password_changed':   return '#450a0a';
-    case 'new_homework':       return '#14532d';
-    case 'coupon_redeemed':    return '#2e1065';
-    case 'welcome':            return '#2e1065';
-    case 'download_expiring':  return '#431407';
-    default:                   return '#1e1e2e';
+    case 'course_enrolled':    return '#E4F8EC'; // green
+    case 'payment_failed':     return '#FCE4EE'; // red
+    case 'new_course':         return '#EEE9FF'; // purple
+    case 'achievement':        return '#FFF3DC'; // amber
+    case 'weekly_streak':      return '#FFE9DC'; // orange
+    case 'leaderboard_winner': return '#FFF3DC'; // amber
+    case 'app_update':         return '#E6EEFF'; // blue
+    case 'coins_earned':       return '#FFF3DC'; // amber
+    case 'coins_spent':        return '#EEE9FF'; // purple
+    case 'badge_lost':         return '#E6EEFF'; // blue
+    case 'password_changed':   return '#FCE4EE'; // red
+    case 'new_homework':       return '#E4F8EC'; // green
+    case 'coupon_redeemed':    return '#EEE9FF'; // purple
+    case 'welcome':            return '#EEE9FF'; // purple
+    case 'download_expiring':  return '#FFE9DC'; // orange
+    default:                   return '#EEF0F5'; // neutral
   }
 }
 
@@ -357,12 +358,12 @@ const styles = StyleSheet.create({
   iconText: { fontSize: 16 },
 
   cardContent: { flex: 1, paddingRight: 24 },
-  cardTitle: { color: Colors.text, fontSize: 13, fontWeight: '600', marginBottom: 3 },
+  cardTitle: { color: Colors.text, fontSize: 13, fontWeight: '700', marginBottom: 3 },
   cardBody: { color: Colors.muted, fontSize: 12, lineHeight: 17, marginBottom: 4 },
-  cardTime: { color: 'rgba(255,255,255,0.3)', fontSize: 11 },
+  cardTime: { color: Colors.muted, fontSize: 11 },
 
   deleteBtn: { padding: 4, alignSelf: 'flex-start' },
-  deleteBtnText: { color: 'rgba(255,255,255,0.25)', fontSize: 13 },
+  deleteBtnText: { color: Colors.muted, fontSize: 13 },
 
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
@@ -407,17 +408,17 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: Colors.cardAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  modalCloseText: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '600' },
+  modalCloseText: { color: Colors.muted, fontSize: 14, fontWeight: '600' },
 
   modalBody: { paddingHorizontal: 18 },
   modalBodyContent: { paddingVertical: 18 },
   modalTitle: { color: Colors.text, fontSize: 17, fontWeight: '700', marginBottom: 10, lineHeight: 23 },
-  modalMessage: { color: 'rgba(255,255,255,0.75)', fontSize: 14, lineHeight: 22 },
-  modalTime: { color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 14 },
+  modalMessage: { color: Colors.text, fontSize: 14, lineHeight: 22 },
+  modalTime: { color: Colors.muted, fontSize: 12, marginTop: 14 },
 
   modalFooter: {
     flexDirection: 'row',
@@ -430,7 +431,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 9,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: Colors.cardAlt,
   },
   modalFooterBtnText: { color: Colors.text, fontSize: 14, fontWeight: '600' },
 });

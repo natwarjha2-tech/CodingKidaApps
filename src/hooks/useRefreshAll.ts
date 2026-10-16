@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Animated, Easing } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { getUnreadCount } from '@/services/notification.service';
+import { clearPlayCache } from '@/utils/playCache.util';
 
 /**
  * Unified "refresh the ENTIRE app" action — one behaviour everywhere.
@@ -33,6 +34,14 @@ export function useRefreshAll(onDone?: (unread: number) => void) {
       // Invalidate EVERY query (no key filter) → whole app refetches fresh data,
       // bypassing staleTime, and the cache is updated with the latest values.
       await queryClient.invalidateQueries();
+
+      // Also clear the signed "play" cache — a plain in-memory singleton that
+      // React Query's invalidateQueries does NOT touch. Without this, a lesson's
+      // stale video/quality URLs (e.g. cached while the video was still
+      // processing, so qualityUrls was empty) would persist for the full 45-min
+      // TTL even after the user taps Refresh. Clearing it forces a fresh /play
+      // fetch (picking up finished qualities) on the next lesson open.
+      clearPlayCache();
 
       // Refresh unread notification badge too (not a React Query source).
       try {

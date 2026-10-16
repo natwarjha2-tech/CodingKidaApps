@@ -7,3 +7,17 @@ export { XPService, XP_REWARDS, XP_LEVELS, XP_BADGES } from './xp.service';
 export type { XPState, LevelInfo, Badge, XPDerivedStats } from './xp.service';
 export { SupportService, formatSupportNumber } from './support.service';
 export type { SupportContact } from './support.service';
+export {
+  speakCodo,
+  toggleCodoVoice,
+  stopCodoVoice,
+  isSpeaking,
+  isVoiceAvailable,
+  plainForSpeech,
+  seedVoiceCache,
+  seedHelpCache,
+  getHelpCache,
+  loadCodoScripts,
+  codoScriptText,
+  speakCodoSolution,
+} from './codoVoice.service';

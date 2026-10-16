@@ -91,6 +91,18 @@ export const AttendanceService = {
     }
 
     await StorageService.setObject(await attendanceKey(), data);
+
+    // Persist this session's minutes to the SERVER so the report can show the
+    // full history (join month → now) across devices. Best-effort — never
+    // blocks or throws; the local record above is the source for this session.
+    if (allowedMins > 0) {
+      try {
+        const { attendanceApi } = await import('@/api');
+        void attendanceApi.record(today, allowedMins, 1);
+      } catch {
+        // ignore — offline/record failure is non-fatal
+      }
+    }
   },
 
   /**
@@ -158,6 +170,36 @@ export const AttendanceService = {
     }
 
     return calendar;
+  },
+
+  /**
+   * Fetch the FULL per-day history from the server (join month → now) and merge
+   * it with local data (which has the freshest current-session minutes). Returns
+   * the join date + a YYYY-MM-DD → minutes map. Falls back to local-only on error.
+   */
+  getFullHistory: async (): Promise<{ joinedAt: string | null; byDate: Record<string, number> }> => {
+    const byDate: Record<string, number> = {};
+    let joinedAt: string | null = null;
+    // Server history (full, across devices).
+    try {
+      const { attendanceApi } = await import('@/api');
+      const res = await attendanceApi.getHistory();
+      if (res && res.success) {
+        joinedAt = res.joinedAt ?? null;
+        for (const d of res.days ?? []) {
+          if (d && d.date) byDate[d.date] = Math.min(d.minutes || 0, MAX_DAILY_MINS);
+        }
+      }
+    } catch { /* offline — use local only */ }
+    // Merge local (keep the LARGER value — local may have fresher today-minutes).
+    try {
+      const data = await AttendanceService.getData();
+      for (const [date, day] of Object.entries(data)) {
+        const localMins = Math.min(day?.totalMins ?? 0, MAX_DAILY_MINS);
+        byDate[date] = Math.max(byDate[date] || 0, localMins);
+      }
+    } catch { /* ignore */ }
+    return { joinedAt, byDate };
   },
 
   /**

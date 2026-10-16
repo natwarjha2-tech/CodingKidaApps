@@ -10,6 +10,8 @@
     "axios": "^1.7.9",
     "babel-preset-expo": "^56.0.14",
     "expo": "~56.0.9",
+    "expo-audio": "~56.0.13",
+    "expo-build-properties": "^57.0.22",
     "expo-constants": "~56.0.17",
     "expo-dev-client": "~56.0.20",
     "expo-device": "~56.0.4",

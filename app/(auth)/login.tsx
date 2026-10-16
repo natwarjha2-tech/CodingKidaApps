@@ -9,6 +9,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks';
 import { authApi } from '@/api';
 import { Colors } from '@/theme';
+import { StorageService } from '@/services';
+
+// Securely stored (expo-secure-store, OS-encrypted) remembered credentials so
+// the next launch prefills email + password and the user can log in directly.
+const SAVED_LOGIN_KEY = 'ck_saved_login';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -73,6 +78,21 @@ export default function LoginScreen() {
     }
   };
 
+  // Prefill saved credentials on mount (if the user ticked "Remember me"
+  // previously). Fills email + password and checks the box so they can log in
+  // directly or edit the values.
+  useEffect(() => {
+    StorageService.getObject<{ email?: string; password?: string }>(SAVED_LOGIN_KEY)
+      .then((saved) => {
+        if (saved && saved.email) {
+          setEmail(saved.email);
+          if (saved.password) setPassword(saved.password);
+          setRememberMe(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Listen for keyboard show/hide to add bottom padding
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -100,6 +120,16 @@ export default function LoginScreen() {
     }
     try {
       await login({ email: email.trim(), password: password.trim() }, rememberMe);
+      // On success, save (or clear) credentials for next-launch autofill.
+      // Stored in OS-encrypted secure storage. Only saved when "Remember me"
+      // is ticked; otherwise any previously-saved copy is removed.
+      try {
+        if (rememberMe) {
+          await StorageService.setObject(SAVED_LOGIN_KEY, { email: email.trim(), password: password.trim() });
+        } else {
+          await StorageService.delete(SAVED_LOGIN_KEY);
+        }
+      } catch { /* non-fatal */ }
     } catch (err: any) {
       Alert.alert('Login Failed', err.message ?? 'Please try again.');
     }

@@ -1,41 +1,63 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Alert, Keyboard, Platform } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Alert, Keyboard, Platform, ActivityIndicator, BackHandler, Modal } from 'react-native';
+import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useCourseStore, useAuthStore } from '@/store';
-import { useQuiz, useExercise, useHomework, useCoins } from '@/hooks';
-import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, coursesApi, type LessonReviewsData } from '@/api';
-import { StorageService, DownloadService, XPService, XP_REWARDS } from '@/services';
+import { useQuiz, useExercise, useCoins } from '@/hooks';
+import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, coursesApi, lessonChatApi, lessonHelpApi, codoScriptsApi, type LessonReviewsData, type LessonChatMessage } from '@/api';
+import { StorageService, DownloadService, XPService, XP_REWARDS, seedHelpCache, stopCodoVoice } from '@/services';
 import { userScopedKey } from '@/services/storage.service';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { CoinRewardToast } from '@/components/common/CoinRewardToast';
+import { CodoHelpButton, CodoAnswerCard } from '@/components/lesson/CodoHelp';
+import { CodoPromptModal } from '@/components/lesson/CodoPromptModal';
 import { getWatchlist, setWatchlist } from '@/utils/watchlist.util';
+import { getPlayCache, setPlayCache, type PlayData } from '@/utils/playCache.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
-type Tab = 'notes' | 'quiz' | 'exercise' | 'homework' | 'streak' | 'rate';
+// 'asknow' is the lesson Q&A tab (desktop calls it "AskNow"). Renamed from the
+// earlier 'doubts' key so the tab, deep-link, and empty-state all read "AskNow".
+type Tab = 'notes' | 'quiz' | 'exercise' | 'streak' | 'rate' | 'asknow';
 
-// In-memory cache of the signed "play" data per lesson (45-min TTL). Presigned
-// S3 URLs are valid 60 min, so reusing within 45 min avoids a re-sign call and
-// replays instantly. Module-scoped so it survives screen re-mounts in a session.
-type PlayData = { videoUrl: string; qualityUrls: Record<string, string>; hlsQualities: string[]; notes?: string };
-const _playCache: Record<string, { at: number; data: PlayData }> = {};
+// The signed "play" data cache (45-min TTL) now lives in a shared util module
+// (@/utils/playCache.util) so the global Refresh can clear it. See getPlayCache /
+// setPlayCache / clearPlayCache. PlayData is imported from there too.
+
+// Lesson IDs for which Codo's "take a quiz?" nudge has ALREADY been shown this
+// app session. Module-scoped so it survives the lesson screen remounting (e.g.
+// navigating forward to the next lesson, then pressing back to this one). This
+// prevents Codo from re-asking on a lesson the user already answered/declined
+// when they simply revisit it. It resets on app restart — a genuine fresh
+// re-watch to 90% in a new session will prompt again.
+const _codoPromptedLessons = new Set<string>();
 
 export default function LessonScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const { activeCourse, activeLesson, activeModule, lessonContext } = useCourseStore();
   const setActiveLesson = useCourseStore((s) => s.setActiveLesson);
   const xpUserId = useAuthStore((s) => s.user?.id);
-  const [activeTab, setActiveTab] = useState<Tab>('notes');
+  const currentUserEmail = useAuthStore((s) => s.user?.email);
+  // Initial tab honours a ?tab= deep-link (e.g. from a lesson_question /
+  // lesson_answer notification → jump straight to the AskNow chat). Accept both
+  // 'asknow' and the legacy 'doubts' param so older notification links still work.
+  const [activeTab, setActiveTab] = useState<Tab>(
+    tab === 'asknow' || tab === 'doubts' ? 'asknow' : 'notes'
+  );
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
   const [quizScore, setQuizScore] = useState({ correct: 0, total: 0 });
   const [quizCompleted, setQuizCompleted] = useState(false);
   const [quizAttemptedBefore, setQuizAttemptedBefore] = useState(false);
+  // Expanded full-screen quiz view (same content, Close returns to inline tab).
+  const [quizExpanded, setQuizExpanded] = useState(false);
+  // Once the student manually closes the expanded quiz, don't auto-reopen it
+  // for this tab visit (so Close actually stays closed).
+  const quizAutoOpenedRef = useRef(false);
   const [exerciseAnswers, setExerciseAnswers] = useState<Record<string, string>>({});
   const [exerciseResults, setExerciseResults] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -50,6 +72,22 @@ export default function LessonScreen() {
   const courseId = lessonContext?.courseId ?? '';
   const queryClient = useQueryClient();
   const [lessonCompleted, setLessonCompleted] = useState(false);
+  const navigation = useNavigation();
+
+  // ── Codo "lesson complete → take a quiz?" nudge ──────────────────────────
+  // Fixed Codo lines (same for everyone, DB-backed, no AI). Fetched once.
+  const [codoScripts, setCodoScripts] = useState<Record<string, string>>({});
+  // The quiz-offer popup (shown when the student tries to LEAVE after watching
+  // ≥90%, if they haven't done/attempted the quiz yet).
+  const [showQuizPrompt, setShowQuizPrompt] = useState(false);
+  // The thank-you popup (shown once the quiz is completed).
+  const [showQuizThanks, setShowQuizThanks] = useState(false);
+  // Guards so each popup nags at most once per lesson visit.
+  const quizPromptShownRef = useRef(false);
+  const quizThanksShownRef = useRef(false);
+  // When the user is leaving and we intercept to show the prompt, we hold the
+  // navigation action here so "Not now" can resume it.
+  const pendingLeaveRef = useRef<null | (() => void)>(null);
 
   // Video engagement: like/dislike reactions + view count (mirrors desktop)
   const [likes, setLikes] = useState(0);
@@ -65,6 +103,25 @@ export default function LessonScreen() {
   const [rateMessage, setRateMessage] = useState<{ text: string; success: boolean } | null>(null);
   const [reviewsData, setReviewsData] = useState<LessonReviewsData | null>(null);
   const [reviewsLoading, setReviewsLoading] = useState(false);
+  // Whether THIS user has already rated the current lesson. A lesson may be
+  // rated only ONCE — this locks the Rate tab (matches desktop). Detected by
+  // comparing the current user's email local-part to each review's studentName.
+  const [lessonAlreadyRated, setLessonAlreadyRated] = useState(false);
+
+  // Doubts / Q&A group chat (mirrors desktop lesson-chat). Enrolled students ask
+  // doubts; the course instructor replies. RN has no EventSource, so live updates
+  // use polling on the server's `after` cursor while the Doubts tab is open.
+  const [chatMessages, setChatMessages] = useState<LessonChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatIsInstructor, setChatIsInstructor] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const [chatRefreshing, setChatRefreshing] = useState(false);
+  // Tracks whether history has been loaded for this lesson (so opening the tab
+  // loads once). State, not ref, so the load effect reacts correctly.
+  const [chatLoaded, setChatLoaded] = useState(false);
+  const chatSeenIdsRef = useRef<Record<string, true>>({}); // de-dupe by message id
+  const chatCursorRef = useRef<string | null>(null);       // newest createdAt seen
 
   // Invalidate dashboard when leaving lesson — so lastWatched card updates instantly
   useEffect(() => {
@@ -84,12 +141,26 @@ export default function LessonScreen() {
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
+  // Dedicated scroll ref for the AskNow message list (its own bounded, scrollable
+  // area so a long conversation scrolls independently and the composer stays
+  // pinned/visible below it).
+  const chatScrollRef = useRef<ScrollView>(null);
 
   // Track keyboard visibility — collapse video when keyboard is open (like YouTube)
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  // Keyboard height — used to pad the scroll area so the AskNow composer is
+  // lifted ABOVE the keyboard (visible while typing, even after a long chat).
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      setKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 60);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
@@ -127,12 +198,12 @@ export default function LessonScreen() {
     let cancelled = false;
     if (!lessonId) { setPlayData(null); return; }
 
-    // 45-min cache: presigned S3 URLs are valid 60 min, so reusing within 45 min
-    // is safe (15-min buffer) and lets re-opening the same lesson replay instantly
-    // without another signing call. NEVER cache beyond the URL's 60-min lifetime.
-    const cached = _playCache[lessonId];
-    if (cached && Date.now() - cached.at < 45 * 60 * 1000) {
-      setPlayData(cached.data);
+    // 45-min cache (shared util so Refresh can clear it): presigned S3 URLs are
+    // valid 60 min, so reusing within 45 min is safe (15-min buffer) and lets
+    // re-opening the same lesson replay instantly without another signing call.
+    const cached = getPlayCache(lessonId);
+    if (cached) {
+      setPlayData(cached);
       return;
     }
 
@@ -147,7 +218,17 @@ export default function LessonScreen() {
           hlsQualities: res.lesson.hlsQualities || [],
           notes: res.lesson.notes,
         };
-        _playCache[lessonId] = { at: Date.now(), data };
+        // Only cache a FULLY-READY response. If the lesson has a video but its
+        // qualities aren't ready yet (still processing on the server), caching
+        // here would pin an empty-qualities response for 45 min — so re-opening
+        // (even as another user, since this cache is device-wide and keyed by
+        // lessonId only) would keep showing no qualities. Skip caching in that
+        // case so the next open re-fetches and picks up the finished qualities.
+        const videoStillProcessing =
+          !!data.videoUrl && Object.keys(data.qualityUrls).length === 0;
+        if (!videoStillProcessing) {
+          setPlayCache(lessonId, data);
+        }
         setPlayData(data);
       })
       .catch(() => {});
@@ -171,22 +252,25 @@ export default function LessonScreen() {
     const idx = seq.findIndex((l) => l.id === lessonId);
     const next = idx >= 0 ? seq[idx + 1] : null;
     if (!next) return;
-    const cached = _playCache[next.id];
-    if (cached && Date.now() - cached.at < 45 * 60 * 1000) return; // already warm
+    if (getPlayCache(next.id)) return; // already warm
     const t = setTimeout(() => {
       coursesApi
         .getLessonPlay(next.id)
         .then((res) => {
           if (!res?.success || !res.lesson) return;
-          _playCache[next.id] = {
-            at: Date.now(),
-            data: {
-              videoUrl: res.lesson.videoUrl || '',
-              qualityUrls: res.lesson.qualityUrls || {},
-              hlsQualities: res.lesson.hlsQualities || [],
-              notes: res.lesson.notes,
-            },
+          const data = {
+            videoUrl: res.lesson.videoUrl || '',
+            qualityUrls: res.lesson.qualityUrls || {},
+            hlsQualities: res.lesson.hlsQualities || [],
+            notes: res.lesson.notes,
           };
+          // Don't warm the cache with a still-processing (empty-qualities)
+          // response — same reasoning as the main fetch above.
+          const videoStillProcessing =
+            !!data.videoUrl && Object.keys(data.qualityUrls).length === 0;
+          if (!videoStillProcessing) {
+            setPlayCache(next.id, data);
+          }
         })
         .catch(() => {});
     }, 4000);
@@ -216,13 +300,24 @@ export default function LessonScreen() {
     return flat[idx + 1];
   })();
 
+  // Holds the latest Codo "take a quiz?" gate so goToNextLesson (defined before
+  // the gate) can call it without a use-before-declaration issue.
+  const quizNudgeRef = useRef<((proceed: () => void) => boolean) | null>(null);
+
   const goToNextLesson = useCallback(() => {
     if (!nextLessonInfo) return;
     const { lesson, module } = nextLessonInfo;
-    // Set the next lesson active (so the reused screen has full context), then
-    // navigate. Its play URL was prefetched, so it opens near-instantly.
-    setActiveLesson(lesson, module, lessonContext?.courseId ?? '', lessonContext?.courseTitle ?? '');
-    router.push(`/lesson/${lesson.id}`);
+    // The actual navigation to the next lesson.
+    const go = () => {
+      // Set the next lesson active (so the reused screen has full context), then
+      // navigate. Its play URL was prefetched, so it opens near-instantly.
+      setActiveLesson(lesson, module, lessonContext?.courseId ?? '', lessonContext?.courseTitle ?? '');
+      router.push(`/lesson/${lesson.id}`);
+    };
+    // If the current lesson is ≥90% watched with an unattempted quiz, Codo asks
+    // first; "Not now" runs `go`. Otherwise navigate immediately.
+    if (quizNudgeRef.current && quizNudgeRef.current(go)) return;
+    go();
   }, [nextLessonInfo, setActiveLesson, lessonContext]);
 
   // Check download status on mount
@@ -239,20 +334,25 @@ export default function LessonScreen() {
 
   const { data: quizData } = useQuiz(lessonId);
   const { data: exerciseData } = useExercise(lessonId);
-  const { data: homeworkData } = useHomework(lessonId);
 
   // Check if quiz was previously attempted for this lesson (user-scoped key so
   // different users on the same device don't share attempted/completed state).
   useEffect(() => {
-    if (lessonId) {
-      userScopedKey('ck_quiz_attempted_lessons').then((key) =>
-        StorageService.getObject<string[]>(key).then((attempted) => {
-          if (attempted && attempted.includes(lessonId)) {
-            setQuizAttemptedBefore(true);
-          }
-        })
-      );
-    }
+    if (!lessonId) return;
+    // RESET per-lesson state first — the screen is reused across lessons, so
+    // without this the previous lesson's "attempted" (true) leaks into a new
+    // lesson and wrongly suppresses Codo's quiz nudge. Mirrors the desktop fix.
+    setQuizAttemptedBefore(false);
+    setQuizCompleted(false);
+    quizPromptShownRef.current = false;
+    quizThanksShownRef.current = false;
+    userScopedKey('ck_quiz_attempted_lessons').then((key) =>
+      StorageService.getObject<string[]>(key).then((attempted) => {
+        if (attempted && attempted.includes(lessonId)) {
+          setQuizAttemptedBefore(true);
+        }
+      })
+    );
   }, [lessonId]);
 
   // Backend is the source of truth for "already attempted" — the QuizAttempt
@@ -281,8 +381,33 @@ export default function LessonScreen() {
   });
 
   const quizzes = quizData?.quizzes ?? [];
+
+  // Auto-open the full-screen quiz the moment the Quiz tab is active and a quiz
+  // exists (so the student doesn't have to tap "Open"). Only auto-opens ONCE
+  // per tab visit — if they manually Close, it stays closed. Resets when they
+  // leave the quiz tab so re-entering auto-opens again.
+  useEffect(() => {
+    if (activeTab === 'quiz' && quizzes.length > 0 && !quizCompleted && !quizAutoOpenedRef.current) {
+      quizAutoOpenedRef.current = true;
+      setQuizExpanded(true);
+    }
+    if (activeTab !== 'quiz') {
+      quizAutoOpenedRef.current = false; // allow auto-open next time they open the tab
+    }
+  }, [activeTab, quizzes.length, quizCompleted]);
+
+  // When the quiz is fully completed, show the result + Codo thank-you briefly,
+  // then AUTO-CLOSE the full-screen quiz and return to the normal lesson screen.
+  useEffect(() => {
+    if (quizCompleted && quizExpanded) {
+      const t = setTimeout(() => {
+        stopCodoVoice();
+        setQuizExpanded(false);
+      }, 3500); // ~3.5s so the student sees the score + hears Codo's thanks
+      return () => clearTimeout(t);
+    }
+  }, [quizCompleted, quizExpanded]);
   const exercises = exerciseData?.exercises ?? [];
-  const homeworks = homeworkData?.homeworks ?? [];
   const streak = streakData?.streak ?? null;
 
   // Streak answer state
@@ -303,19 +428,87 @@ export default function LessonScreen() {
     } catch {
       // Silently fail - will retry next time
     }
-    // When the video finishes, offer to continue to the next lesson (mirrors the
-    // "up next" prompt that mobile learning apps show at the end of a video).
-    if (nextLessonInfo) {
-      Alert.alert(
-        'Lesson Complete! 🎉',
-        `Up next: ${nextLessonInfo.lesson.title}`,
-        [
-          { text: 'Stay here', style: 'cancel' },
-          { text: 'Next Lesson ▶', onPress: goToNextLesson },
-        ],
-      );
+    // NOTE: we no longer show an Alert popup here. The floating "UP NEXT" button
+    // (rendered when lessonCompleted && nextLessonInfo) is the single next-lesson
+    // prompt — the Alert was a duplicate that popped a few seconds later.
+  }, [lessonId, lessonCompleted, queryClient]);
+
+  // Fetch the fixed Codo lines once (DB-backed, no AI). Best-effort — if it
+  // fails, the popups just won't show.
+  useEffect(() => {
+    let cancelled = false;
+    codoScriptsApi.get()
+      .then((res) => { if (!cancelled && res?.success && res.scripts) setCodoScripts(res.scripts); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Reset the per-lesson nag guards when the lesson changes.
+  useEffect(() => {
+    quizPromptShownRef.current = false;
+    quizThanksShownRef.current = false;
+  }, [lessonId]);
+
+  // Intercept leaving the lesson AFTER the student has watched ≥90% (lessonCompleted)
+  // and still hasn't done/attempted the quiz. Show Codo's "take a quiz?" nudge
+  // once; "Not now" resumes the navigation, "Take the Quiz" jumps to the tab.
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e: { preventDefault: () => void; data: { action: unknown } }) => {
+      const quizDone = quizCompleted || quizAttemptedBefore;
+      // Already prompted for this lesson this session → let navigation proceed.
+      if (lessonId && _codoPromptedLessons.has(lessonId)) return;
+      if (!lessonCompleted || quizDone || quizPromptShownRef.current || quizzes.length === 0) {
+        return; // let navigation proceed normally
+      }
+      // Hold the leave; show the prompt instead.
+      e.preventDefault();
+      quizPromptShownRef.current = true;
+      if (lessonId) _codoPromptedLessons.add(lessonId); // remember for this session
+      pendingLeaveRef.current = () => navigation.dispatch(e.data.action as never);
+      setShowQuizPrompt(true);
+    });
+    return sub;
+  }, [navigation, lessonId, lessonCompleted, quizCompleted, quizAttemptedBefore, quizzes.length]);
+
+  // When the quiz is completed, show Codo's thank-you (once).
+  useEffect(() => {
+    if (quizCompleted && !quizThanksShownRef.current) {
+      quizThanksShownRef.current = true;
+      setShowQuizThanks(true);
     }
-  }, [lessonId, lessonCompleted, queryClient, nextLessonInfo, goToNextLesson]);
+  }, [quizCompleted]);
+
+  // Shared gate used by the header back arrow (and any explicit leave action).
+  // If the lesson is ≥90% watched, has an unattempted quiz, and we haven't
+  // nagged yet → show Codo's prompt and return true (caller should NOT proceed;
+  // "Not now" runs `proceed`). Otherwise returns false (caller proceeds).
+  // This complements the beforeRemove listener, which isn't always reliable for
+  // the custom back button in Expo Router.
+  const maybeShowQuizNudge = useCallback((proceed: () => void): boolean => {
+    const quizDone = quizCompleted || quizAttemptedBefore;
+    // Already prompted for THIS lesson this session (even if the screen was
+    // remounted via forward+back navigation) → never re-ask. This is the fix
+    // for Codo re-appearing when you go to the next lesson and press back.
+    if (lessonId && _codoPromptedLessons.has(lessonId)) return false;
+    if (!lessonCompleted || quizDone || quizPromptShownRef.current || quizzes.length === 0) {
+      return false;
+    }
+    quizPromptShownRef.current = true;
+    if (lessonId) _codoPromptedLessons.add(lessonId); // remember for this session
+    pendingLeaveRef.current = proceed;
+    setShowQuizPrompt(true);
+    return true;
+  }, [lessonId, lessonCompleted, quizCompleted, quizAttemptedBefore, quizzes.length]);
+
+  // Keep the ref in sync so goToNextLesson (defined earlier) can use the gate.
+  useEffect(() => { quizNudgeRef.current = maybeShowQuizNudge; }, [maybeShowQuizNudge]);
+
+  // Hardware back (Android): same gate before leaving the lesson screen.
+  useEffect(() => {
+    const onHardwareBack = () => maybeShowQuizNudge(() => router.back());
+    const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => sub.remove();
+  }, [maybeShowQuizNudge]);
 
   // Load like/dislike/view counts + user's current reaction (mirrors desktop)
   useEffect(() => {
@@ -370,12 +563,39 @@ export default function LessonScreen() {
     setReviewsLoading(true);
     try {
       const data = await feedbackApi.getLessonReviews(lessonId);
-      if (data?.success) setReviewsData(data);
+      if (data?.success) {
+        setReviewsData(data);
+        // One-rating-per-lesson: the lesson-feedback API exposes each review's
+        // studentName (email local-part). Match it (case-insensitive) against the
+        // current user to detect an existing rating and lock the form. The backend
+        // stores every submission, so the client enforces the single-rating rule.
+        const myName = (currentUserEmail || '').split('@')[0].toLowerCase();
+        if (myName && Array.isArray(data.reviews)) {
+          const mine = data.reviews.find(
+            (r) => (r.studentName || '').toLowerCase() === myName
+          );
+          if (mine) {
+            setLessonAlreadyRated(true);
+            setLessonRating(mine.rating || 0);
+            setRateFeedback(mine.feedback || '');
+          }
+        }
+      }
     } catch {
       // Silent — reviews are non-critical
     } finally {
       setReviewsLoading(false);
     }
+  }, [lessonId, currentUserEmail]);
+
+  // Reset the rating lock + form when switching to a different lesson so the
+  // per-lesson state doesn't leak across lessons in the reused screen.
+  useEffect(() => {
+    setLessonAlreadyRated(false);
+    setLessonRating(0);
+    setRateFeedback('');
+    setRateMessage(null);
+    setReviewsData(null);
   }, [lessonId]);
 
   // Load reviews the first time the Rate tab is opened
@@ -389,6 +609,10 @@ export default function LessonScreen() {
 
   // Submit lesson rating (mirrors desktop wording/behaviour)
   const handleSubmitLessonRating = useCallback(async () => {
+    if (lessonAlreadyRated) {
+      setRateMessage({ text: "You've already rated this lesson.", success: true });
+      return;
+    }
     if (lessonRating === 0) {
       setRateMessage({ text: 'Please select a star rating', success: false });
       return;
@@ -404,8 +628,8 @@ export default function LessonScreen() {
       });
       if (data?.success) {
         setRateMessage({ text: '🎉 Thank you! Your rating has been submitted.', success: true });
-        setRateFeedback('');
-        setLessonRating(0);
+        // Lock the form — one rating per lesson (keep the rating shown read-only).
+        setLessonAlreadyRated(true);
         // Refresh the reviews list in the background — do NOT await, so the
         // success message shows instantly (the reviews query can be slow).
         void loadLessonReviews();
@@ -417,7 +641,185 @@ export default function LessonScreen() {
     } finally {
       setRateSubmitting(false);
     }
-  }, [lessonRating, rateFeedback, lessonId, activeLesson?.title, loadLessonReviews]);
+  }, [lessonAlreadyRated, lessonRating, rateFeedback, lessonId, activeLesson?.title, loadLessonReviews]);
+
+  // ── Doubts / Q&A group chat ──
+  // Append only messages we haven't rendered yet (de-dupe by id), keep the newest
+  // createdAt as the polling cursor, and auto-scroll to the latest.
+  const appendChatMessages = useCallback((incoming: LessonChatMessage[]) => {
+    if (!incoming || incoming.length === 0) return;
+    const fresh = incoming.filter((m) => m && m.id && !chatSeenIdsRef.current[m.id]);
+    if (fresh.length === 0) return;
+    fresh.forEach((m) => { chatSeenIdsRef.current[m.id] = true; });
+    const last = fresh[fresh.length - 1];
+    if (last?.createdAt) chatCursorRef.current = last.createdAt;
+    setChatMessages((prev) => [...prev, ...fresh]);
+  }, []);
+
+  // Load chat history once when the Doubts tab is first opened for this lesson.
+  const loadLessonChat = useCallback(async () => {
+    if (!lessonId || chatLoaded) return;
+    setChatLoading(true);
+    try {
+      const data = await lessonChatApi.getMessages(lessonId);
+      if (data?.success) {
+        setChatIsInstructor(!!data.isInstructor);
+        chatSeenIdsRef.current = {};
+        chatCursorRef.current = null;
+        setChatMessages([]);
+        appendChatMessages(data.messages || []);
+        setChatLoaded(true);
+      }
+    } catch {
+      // Silent — the tab shows an empty/retry state
+    } finally {
+      setChatLoading(false);
+    }
+  }, [lessonId, chatLoaded, appendChatMessages]);
+
+  // Open the Doubts tab → load history once.
+  useEffect(() => {
+    if (activeTab === 'asknow' && !chatLoaded && !chatLoading) {
+      loadLessonChat();
+    }
+  }, [activeTab, chatLoaded, chatLoading, loadLessonChat]);
+
+  // Arriving via a lesson_answer notification (?tab=doubts): if history is
+  // already loaded for this lesson, fetch just the newer messages once so the
+  // instructor's fresh reply appears immediately (no polling needed).
+  useEffect(() => {
+    if ((tab === 'asknow' || tab === 'doubts') && chatLoaded) {
+      refreshLessonChat();
+    }
+    // Only when the deep-link param or lesson changes — not on every refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, lessonId, chatLoaded]);
+
+  // No background polling (keeps backend/data cost minimal). New messages are
+  // fetched ON DEMAND only: when the Doubts tab opens, after you send, on
+  // pull-to-refresh / the Refresh button, and when arriving via a notification
+  // tap (which re-fetches on navigation). Fetches only messages newer than the
+  // cursor so a refresh is cheap.
+  const refreshLessonChat = useCallback(async () => {
+    if (!lessonId) return;
+    setChatRefreshing(true);
+    try {
+      const after = chatCursorRef.current || undefined;
+      const data = await lessonChatApi.getMessages(lessonId, after);
+      if (data?.success) appendChatMessages(data.messages || []);
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setChatRefreshing(false);
+    }
+  }, [lessonId, appendChatMessages]);
+
+  // "Codo is typing…" while we wait for the auto-generated AI reply after a send.
+  const [chatAwaitingAi, setChatAwaitingAi] = useState(false);
+
+  // Keep the AskNow message list pinned to the newest message: when the chat
+  // grows or "Codo is typing…" toggles, scroll the INNER chat list to the
+  // bottom. The list is its own bounded scroll area, so this never shifts the
+  // composer off-screen.
+  useEffect(() => {
+    if (activeTab !== 'asknow') return;
+    const t = setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 120);
+    return () => clearTimeout(t);
+  }, [chatMessages.length, chatAwaitingAi, activeTab]);
+
+  // After a student sends a message, the backend auto-generates a Codo (AI)
+  // answer asynchronously (desktop receives it over SSE). React Native has no
+  // EventSource, so we POLL for newer-than-cursor messages a few times until the
+  // AI reply arrives (or we give up). This replicates desktop's "Codo answers
+  // instantly after you ask" without a persistent stream.
+  const pollForReplies = useCallback(async () => {
+    if (!lessonId) return;
+    setChatAwaitingAi(true);
+    let gotAi = false;
+    // ~ up to 15s: 1s, then 2s intervals. AI generation usually lands in <10s.
+    const delays = [1000, 2000, 2000, 2000, 2000, 3000, 3000];
+    try {
+      for (const d of delays) {
+        await new Promise((r) => setTimeout(r, d));
+        const after = chatCursorRef.current || undefined;
+        let data;
+        try {
+          data = await lessonChatApi.getMessages(lessonId, after);
+        } catch {
+          continue; // transient — keep polling
+        }
+        const fresh = data?.success ? (data.messages || []) : [];
+        if (fresh.length > 0) {
+          appendChatMessages(fresh);
+          if (fresh.some((m) => m.senderRole === 'ai' || m.senderRole === 'instructor')) {
+            gotAi = true;
+            break; // Codo (or the instructor) replied — stop polling
+          }
+        }
+      }
+    } finally {
+      setChatAwaitingAi(false);
+    }
+    return gotAi;
+  }, [lessonId, appendChatMessages]);
+
+  // Send a doubt/message; optimistic-render via the returned message (poll
+  // de-dupes), then poll for Codo's auto-generated AI reply (mirrors desktop).
+  const handleSendChat = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || !lessonId || chatSending) return;
+    setChatSending(true);
+    try {
+      const data = await lessonChatApi.send(lessonId, text);
+      if (data?.success && data.message && typeof data.message !== 'string') {
+        setChatInput('');
+        appendChatMessages([data.message]);
+        // Fetch Codo's AI answer that the server generates after the question.
+        void pollForReplies();
+      } else {
+        Alert.alert('Error', (typeof data?.message === 'string' && data.message) || 'Failed to send. Please try again.');
+      }
+    } catch {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setChatSending(false);
+    }
+  }, [chatInput, lessonId, chatSending, appendChatMessages, pollForReplies]);
+
+  // "Connect with our Expert" — escalate under a Codo (AI) answer. Notifies the
+  // instructor and posts a confirmation into the thread (mirrors desktop).
+  const [chatEscalating, setChatEscalating] = useState(false);
+  const [chatEscalated, setChatEscalated] = useState(false);
+  const handleConnectExpert = useCallback(async () => {
+    if (!lessonId || chatEscalating || chatEscalated) return;
+    setChatEscalating(true);
+    try {
+      const data = await lessonChatApi.escalate(lessonId);
+      if (data?.success) {
+        setChatEscalated(true);
+        if (data.message && typeof data.message !== 'string') {
+          appendChatMessages([data.message]);
+        }
+      } else {
+        Alert.alert('Error', (typeof data?.message === 'string' && data.message) || 'Could not connect right now. Please try again.');
+      }
+    } catch {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setChatEscalating(false);
+    }
+  }, [lessonId, chatEscalating, chatEscalated, appendChatMessages]);
+
+  // Reset chat state when switching lessons so a stale thread never lingers.
+  useEffect(() => {
+    setChatLoaded(false);
+    chatSeenIdsRef.current = {};
+    chatCursorRef.current = null;
+    setChatMessages([]);
+    setChatIsInstructor(false);
+    setChatInput('');
+    setChatEscalated(false);
+  }, [lessonId]);
 
   // Save to Watchlist (user-scoped)
   const saveToWatchlist = async () => {
@@ -508,11 +910,44 @@ export default function LessonScreen() {
     }
   };
 
+  // Background cache-warm for a quiz's Codo help (hint + answer). Fetches both
+  // stages; if the server pre-computed audio, seed the voice cache so playback
+  // is instant with no second /api/tts call. Silent + best-effort.
+  const prefetchQuizHelp = useCallback(async (quizId: string) => {
+    const stages: Array<'answer'> = ['answer']; // hint stage removed
+    for (const stage of stages) {
+      try {
+        const data = await lessonHelpApi.getHelp({ kind: 'quiz', quizId, stage });
+        if (data?.success && data.help) {
+          // Cache the FULL response (text + sources + voice) in memory so the
+          // Codo tap renders instantly with NO backend call. seedHelpCache also
+          // seeds the voice cache from data.audio.
+          seedHelpCache('quiz', quizId, stage, {
+            help: data.help,
+            source: data.source,
+            sources: data.sources,
+            audio: data.audio ?? null,
+          });
+        }
+      } catch {
+        // best-effort prefetch — ignore
+      }
+    }
+  }, []);
+
   const handleQuizSubmit = async () => {
     if (selectedOption === null || quizzes.length === 0) return;
     setQuizSubmitted(true);
     const currentQuiz = quizzes[currentQuizIndex];
     const isCorrect = selectedOption === currentQuiz.answer;
+
+    // Wrong answer → warm Codo's help cache in the BACKGROUND (hint + answer)
+    // so when the student taps Codo it's instant. Cached items return at once;
+    // uncached ones generate (and store) now instead of on tap. Best-effort:
+    // silent, never blocks the UI, never throws. Mirrors desktop prefetch.
+    if (!isCorrect && currentQuiz?.id) {
+      void prefetchQuizHelp(currentQuiz.id);
+    }
 
     // Track score
     setQuizScore(prev => ({
@@ -625,16 +1060,117 @@ export default function LessonScreen() {
     { key: 'notes', label: '📊 PPT' },
     { key: 'quiz', label: '🧠 Quiz' },
     { key: 'exercise', label: '💻 Exercise' },
-    { key: 'homework', label: '📝 Homework' },
     ...(streak ? [{ key: 'streak' as Tab, label: '🔥 Streak' }] : []),
+    { key: 'asknow', label: '💬 AskNow' },
     { key: 'rate', label: '⭐ Rate' },
   ];
+
+  // The quiz body (questions, options, submit, Codo help, next). Defined once
+  // and rendered BOTH inline (quiz tab) and inside the full-screen Modal so the
+  // state is shared — closing the overlay shows the same progress inline.
+  const quizBody = quizzes.length > 0 ? (
+    <View>
+      {/* Previously attempted warning */}
+      {quizAttemptedBefore && !quizCompleted && (
+        <View style={[styles.result, { backgroundColor: Colors.warningLight, borderColor: Colors.warning, marginBottom: 12, marginTop: 0 }]}>
+          <Text style={[styles.resultText, { color: Colors.warning, fontWeight: '800' }]}>
+            ⚠️ You attempted this quiz before. Try again only for Practice.
+          </Text>
+          <Text style={{ color: Colors.muted, fontSize: 11, marginTop: 4 }}>No coins or leaderboard changes on re-attempts.</Text>
+        </View>
+      )}
+
+      {quizCompleted ? (
+        <View style={[styles.result, styles.resultCorrect, { marginBottom: 16, marginTop: 0 }]}>
+          <Text style={[styles.resultText, { fontWeight: '800', fontSize: 15 }]}>
+            🎉 You completed this quiz with {quizScore.correct}/{quizzes.length} Correct
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.quizCounter}>
+            Question {currentQuizIndex + 1} of {quizzes.length}
+          </Text>
+          <Text style={styles.question}>{quizzes[currentQuizIndex].question}</Text>
+          {quizzes[currentQuizIndex].options.map((opt, i) => {
+            let bg: string = Colors.card;
+            let border: string = Colors.border;
+            if (quizSubmitted) {
+              if (i === quizzes[currentQuizIndex].answer) { bg = Colors.successLight; border = Colors.success; }
+              else if (i === selectedOption) { bg = Colors.dangerLight; border = Colors.danger; }
+            } else if (i === selectedOption) {
+              bg = Colors.primaryLight; border = Colors.primary;
+            }
+            return (
+              <TouchableOpacity
+                key={i}
+                style={[styles.option, { backgroundColor: bg, borderColor: border }]}
+                onPress={() => !quizSubmitted && setSelectedOption(i)}
+                disabled={quizSubmitted}
+              >
+                <Text style={styles.optionLetter}>{['A','B','C','D'][i]}</Text>
+                <Text style={styles.optionText}>{opt}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          {!quizSubmitted ? (
+            <TouchableOpacity
+              style={[styles.submitBtn, selectedOption === null && styles.submitBtnDisabled]}
+              onPress={handleQuizSubmit}
+              disabled={selectedOption === null}
+            >
+              <Text style={styles.submitBtnText}>Check Answer</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {quizSubmitted && selectedOption !== quizzes[currentQuizIndex].answer && (
+            <CodoHelpButton
+              key={'codo-quiz-' + quizzes[currentQuizIndex].id}
+              kind="quiz"
+              quizId={quizzes[currentQuizIndex].id}
+              onOpenPdf={viewPdf}
+            />
+          )}
+
+          {quizSubmitted ? (
+            <View>
+              <View style={[
+                styles.result,
+                selectedOption === quizzes[currentQuizIndex].answer ? styles.resultCorrect : styles.resultWrong,
+              ]}>
+                <Text style={styles.resultText}>
+                  {selectedOption === quizzes[currentQuizIndex].answer ? '🎉 Correct!' : '❌ Incorrect.'}
+                </Text>
+              </View>
+
+              {currentQuizIndex < quizzes.length - 1 && (
+                <TouchableOpacity
+                  style={[styles.submitBtn, { marginTop: 12, backgroundColor: Colors.success }]}
+                  onPress={() => {
+                    stopCodoVoice();
+                    setCurrentQuizIndex(currentQuizIndex + 1);
+                    setSelectedOption(null);
+                    setQuizSubmitted(false);
+                  }}
+                >
+                  <Text style={styles.submitBtnText}>Next Question →</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : null}
+        </>
+      )}
+    </View>
+  ) : (
+    <Text style={styles.emptyText}>Quiz coming soon for this lesson.</Text>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => { if (!maybeShowQuizNudge(() => router.back())) router.back(); }}>
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
         <Text style={styles.lessonTitle} numberOfLines={1}>
@@ -744,7 +1280,14 @@ export default function LessonScreen() {
       </View>
 
       {/* Tab Content */}
-      <ScrollView ref={scrollViewRef} style={styles.tabContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.tabContent}
+        contentContainerStyle={{ paddingBottom: keyboardVisible ? keyboardHeight + 24 : 0 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
+      >
 
         {/* PPT Tab — shows the single module study file (name ends with "ppt"). */}
         {activeTab === 'notes' && (
@@ -768,93 +1311,20 @@ export default function LessonScreen() {
         {/* Quiz Tab */}
         {activeTab === 'quiz' && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>🧠 Quiz</Text>
-            {quizzes.length > 0 ? (
-              <View>
-                {/* Previously attempted warning */}
-                {quizAttemptedBefore && !quizCompleted && (
-                  <View style={[styles.result, { backgroundColor: Colors.warningLight, borderColor: Colors.warning, marginBottom: 12, marginTop: 0 }]}>
-                    <Text style={[styles.resultText, { color: Colors.warning, fontWeight: '800' }]}>
-                      ⚠️ You attempted this quiz before. Try again only for Practice.
-                    </Text>
-                    <Text style={{ color: Colors.muted, fontSize: 11, marginTop: 4 }}>No coins or leaderboard changes on re-attempts.</Text>
-                  </View>
-                )}
-
-                {/* Quiz completed summary */}
-                {quizCompleted ? (
-                  <View style={[styles.result, styles.resultCorrect, { marginBottom: 16, marginTop: 0 }]}>
-                    <Text style={[styles.resultText, { fontWeight: '800', fontSize: 15 }]}>
-                      🎉 You completed this quiz with {quizScore.correct}/{quizzes.length} Correct
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    <Text style={styles.quizCounter}>
-                      Question {currentQuizIndex + 1} of {quizzes.length}
-                    </Text>
-                    <Text style={styles.question}>{quizzes[currentQuizIndex].question}</Text>
-                    {quizzes[currentQuizIndex].options.map((opt, i) => {
-                      let bg: string = Colors.card;
-                      let border: string = Colors.border;
-                      if (quizSubmitted) {
-                        if (i === quizzes[currentQuizIndex].answer) { bg = Colors.successLight; border = Colors.success; }
-                        else if (i === selectedOption) { bg = Colors.dangerLight; border = Colors.danger; }
-                      } else if (i === selectedOption) {
-                        bg = Colors.primaryLight; border = Colors.primary;
-                      }
-                      return (
-                        <TouchableOpacity
-                          key={i}
-                          style={[styles.option, { backgroundColor: bg, borderColor: border }]}
-                          onPress={() => !quizSubmitted && setSelectedOption(i)}
-                          disabled={quizSubmitted}
-                        >
-                          <Text style={styles.optionLetter}>{['A','B','C','D'][i]}</Text>
-                          <Text style={styles.optionText}>{opt}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-
-                    {!quizSubmitted ? (
-                      <TouchableOpacity
-                        style={[styles.submitBtn, selectedOption === null && styles.submitBtnDisabled]}
-                        onPress={handleQuizSubmit}
-                        disabled={selectedOption === null}
-                      >
-                        <Text style={styles.submitBtnText}>Check Answer</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View>
-                        <View style={[
-                          styles.result,
-                          selectedOption === quizzes[currentQuizIndex].answer ? styles.resultCorrect : styles.resultWrong,
-                        ]}>
-                          <Text style={styles.resultText}>
-                            {selectedOption === quizzes[currentQuizIndex].answer ? '🎉 Correct!' : '❌ Incorrect.'}
-                          </Text>
-                        </View>
-
-                        {currentQuizIndex < quizzes.length - 1 && (
-                          <TouchableOpacity
-                            style={[styles.submitBtn, { marginTop: 12, backgroundColor: Colors.success }]}
-                            onPress={() => {
-                              setCurrentQuizIndex(currentQuizIndex + 1);
-                              setSelectedOption(null);
-                              setQuizSubmitted(false);
-                            }}
-                          >
-                            <Text style={styles.submitBtnText}>Next Question →</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    )}
-                  </>
-                )}
-              </View>
-            ) : (
-              <Text style={styles.emptyText}>Quiz coming soon for this lesson.</Text>
-            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={styles.cardTitle}>🧠 Quiz</Text>
+              {quizzes.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setQuizExpanded(true)}
+                  style={{ backgroundColor: 'rgba(108,71,255,0.15)', borderWidth: 1, borderColor: 'rgba(108,71,255,0.35)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ color: Colors.primary, fontSize: 12, fontWeight: '700' }}>⤢ Open</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* When expanded, the body renders inside the Modal below instead. */}
+            {!quizExpanded && quizBody}
           </View>
         )}
 
@@ -882,6 +1352,10 @@ export default function LessonScreen() {
                 >
                   <Text style={styles.submitBtnText}>{submitting ? 'Evaluating...' : 'Submit Answer'}</Text>
                 </TouchableOpacity>
+
+                {/* Codo "Stuck? Can I help?" — hint then answer (Hindi + voice) */}
+                <CodoHelpButton kind="exercise" exerciseId={ex.id} onOpenPdf={viewPdf} />
+
                 {exerciseResults[ex.id] ? (
                   <View style={[styles.result, exerciseResults[ex.id].startsWith('✅') ? styles.resultCorrect : styles.resultWrong, { marginTop: 12 }]}>
                     <Text style={[styles.resultText, { fontWeight: '800' }]}>
@@ -912,37 +1386,6 @@ export default function LessonScreen() {
                   <Text style={styles.exRankEmpty}>Complete more exercises to see your rank!</Text>
                 )}
               </View>
-            )}
-          </View>
-        )}
-
-        {/* Homework Tab */}
-        {activeTab === 'homework' && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>📝 Homework</Text>
-            {homeworks.length > 0 ? homeworks.map((hw, i) => (
-              <View key={hw.id} style={styles.hwBlock}>
-                <View style={styles.hwHeader}>
-                  <Text style={styles.question}>Q{i + 1}. {hw.title}</Text>
-                  <View style={[styles.diffBadge, {
-                    backgroundColor: hw.difficulty === 'easy' ? Colors.successLight :
-                      hw.difficulty === 'hard' ? Colors.dangerLight : Colors.warningLight,
-                  }]}>
-                    <Text style={[styles.diffText, {
-                      color: hw.difficulty === 'easy' ? Colors.success :
-                        hw.difficulty === 'hard' ? Colors.danger : Colors.warning,
-                    }]}>
-                      {hw.difficulty}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.notesText}>{hw.description}</Text>
-              </View>
-            )) : (
-              <Text style={styles.emptyText}>No homework for this lesson yet.</Text>
-            )}
-            {homeworks.length > 0 && (
-              <Text style={styles.hwNote}>ℹ️ Practice problems — no submission required</Text>
             )}
           </View>
         )}
@@ -1002,44 +1445,199 @@ export default function LessonScreen() {
           </View>
         )}
 
+        {/* AskNow Tab — lesson Q&A chat with Codo + instructor (mirrors desktop) */}
+        {activeTab === 'asknow' && (
+          <View style={styles.card}>
+            <View style={styles.chatHeaderRow}>
+              <Text style={[styles.cardTitle, { marginBottom: 0, flex: 1 }]}>
+                💬 AskNow
+                {chatIsInstructor ? <Text style={styles.chatRoleTag}>  (you are the instructor)</Text> : null}
+              </Text>
+              <TouchableOpacity
+                style={styles.chatRefreshBtn}
+                onPress={refreshLessonChat}
+                disabled={chatRefreshing}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.chatRefreshBtnText}>{chatRefreshing ? '…' : '↻ Refresh'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {chatLoading ? (
+              <Text style={[styles.emptyText, { paddingVertical: 16 }]}>Loading discussion…</Text>
+            ) : chatMessages.length === 0 ? (
+              <Text style={[styles.emptyText, { paddingVertical: 16 }]}>
+                {chatIsInstructor
+                  ? "No questions yet. Students' questions will appear here."
+                  : 'Ask a question about this lesson. Codo answers instantly from your course material, and your instructor can add more. Everyone enrolled can see the discussion.'}
+              </Text>
+            ) : (
+              <ScrollView
+                ref={chatScrollRef}
+                style={styles.chatScroll}
+                contentContainerStyle={styles.chatList}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                {chatMessages.map((m) => {
+                  const isAi = m.senderRole === 'ai';
+                  const isInstructor = m.senderRole === 'instructor';
+                  const mine = !!m.isMine;
+                  // Codo (AI) answers render as a rich card with voice, like desktop.
+                  if (isAi) {
+                    // "Connect with our Expert" shows under Codo answers, but NOT on
+                    // the confirmation message, and not for the instructor's view
+                    // (mirrors desktop showExpertBtn logic).
+                    const isConfirmation = /has been notified|asked to connect with our expert/i.test(m.text || '');
+                    const showExpertBtn = !isConfirmation && !chatIsInstructor;
+                    return (
+                      <View key={m.id} style={styles.chatRow}>
+                        <View style={{ flex: 1 }}>
+                          <CodoAnswerCard text={m.text} onOpenPdf={viewPdf} />
+                          {showExpertBtn && (
+                            <TouchableOpacity
+                              style={[styles.expertBtn, chatEscalated && styles.expertBtnDone]}
+                              onPress={handleConnectExpert}
+                              disabled={chatEscalating || chatEscalated}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.expertBtnText}>
+                                {chatEscalated
+                                  ? '✓ Expert notified'
+                                  : chatEscalating
+                                  ? 'Connecting…'
+                                  : '🎓 Connect with our Expert'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View
+                      key={m.id}
+                      style={[styles.chatRow, mine && styles.chatRowMine]}
+                    >
+                      <View
+                        style={[
+                          styles.chatAvatar,
+                          isInstructor ? styles.chatAvatarInstructor : mine ? styles.chatAvatarMine : styles.chatAvatarOther,
+                        ]}
+                      >
+                        <Text style={styles.chatAvatarText}>
+                          {isInstructor ? 'IN' : (m.senderName ? m.senderName.charAt(0).toUpperCase() : 'U')}
+                        </Text>
+                      </View>
+                      <View style={styles.chatBubbleWrap}>
+                        <Text style={[styles.chatWho, mine && styles.chatWhoMine]}>
+                          {(m.senderName || 'User') + (isInstructor ? ' · Instructor' : '')}
+                        </Text>
+                        <View style={[styles.chatBubble, mine ? styles.chatBubbleMine : styles.chatBubbleOther]}>
+                          <Text style={styles.chatBubbleText}>{m.text}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {/* Codo is composing an answer (polled, since RN has no SSE).
+                    Inside the scroll area so it stays with the latest messages. */}
+                {chatAwaitingAi && (
+                  <View style={styles.chatTypingRow}>
+                    <ActivityIndicator size="small" color={Colors.purple} />
+                    <Text style={styles.chatTypingText}>  Codo is typing…</Text>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
+            {/* Composer — pinned directly below the (independently scrollable)
+                message list, so it's always visible even in a long chat. */}
+            <View style={styles.chatComposer}>
+              <TextInput
+                style={styles.chatInput}
+                placeholder="Ask Codo a question about this lesson…"
+                placeholderTextColor={Colors.muted}
+                value={chatInput}
+                onChangeText={setChatInput}
+                multiline
+                autoCapitalize="sentences"
+                editable={!chatSending}
+                // When the box is tapped, lift it (and the latest messages)
+                // above the keyboard by scrolling the tab area to the bottom.
+                onFocus={() => {
+                  setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 350);
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.chatSendBtn, (chatSending || !chatInput.trim()) && styles.chatSendBtnDisabled]}
+                onPress={handleSendChat}
+                disabled={chatSending || !chatInput.trim()}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.chatSendBtnText}>{chatSending ? '…' : 'Send'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Rate Tab — per-lesson rating + reviews (mirrors desktop) */}
         {activeTab === 'rate' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>⭐ Rate this Lesson</Text>
 
-            {/* Star input */}
-            <View style={styles.rateStarsRow}>
-              {[1, 2, 3, 4, 5].map((star) => (
-                <TouchableOpacity key={star} onPress={() => setLessonRating(star)}>
-                  <Text style={[styles.rateStar, star <= lessonRating && styles.rateStarActive]}>
-                    {star <= lessonRating ? '★' : '☆'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {/* "How helpful?" prompt — hidden once the user has already rated
+                (mirrors desktop _lockLessonRateForm). */}
+            {!lessonAlreadyRated && (
+              <Text style={styles.ratePrompt}>How helpful was this lesson?</Text>
+            )}
 
-            <TextInput
-              style={styles.rateFeedbackInput}
-              placeholder="Share your feedback (optional)"
-              placeholderTextColor={Colors.muted}
-              value={rateFeedback}
-              onChangeText={setRateFeedback}
-              multiline
-              autoCapitalize="sentences"
-            />
+            {/* Stars — only shown when NOT yet rated. Once rated, the stars are
+                removed too (per request) and we show only the thank-you note. */}
+            {!lessonAlreadyRated && (
+              <View style={styles.rateStarsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <TouchableOpacity key={star} onPress={() => setLessonRating(star)} activeOpacity={0.6}>
+                    <Text style={[styles.rateStar, star <= lessonRating && styles.rateStarActive]}>
+                      {star <= lessonRating ? '★' : '☆'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
-            <TouchableOpacity
-              style={[styles.submitBtn, rateSubmitting && styles.submitBtnDisabled]}
-              onPress={handleSubmitLessonRating}
-              disabled={rateSubmitting}
-            >
-              <Text style={styles.submitBtnText}>{rateSubmitting ? 'Submitting...' : 'Submit'}</Text>
-            </TouchableOpacity>
-
-            {rateMessage && (
-              <Text style={[styles.rateMessage, { color: rateMessage.success ? Colors.success : Colors.danger }]}>
-                {rateMessage.text}
+            {/* Already rated → show ONLY the thank-you note (no prompt, no stars,
+                no comment box, no Submit). Otherwise show stars + comment + Submit. */}
+            {lessonAlreadyRated ? (
+              <Text style={[styles.rateMessage, { color: Colors.purple, marginTop: 4 }]}>
+                ✓ You've already rated this lesson. Thanks for your feedback!
               </Text>
+            ) : (
+              <>
+                <TextInput
+                  style={styles.rateFeedbackInput}
+                  placeholder="Share your feedback (optional)"
+                  placeholderTextColor={Colors.muted}
+                  value={rateFeedback}
+                  onChangeText={setRateFeedback}
+                  multiline
+                  autoCapitalize="sentences"
+                />
+                <TouchableOpacity
+                  style={[styles.submitBtn, rateSubmitting && styles.submitBtnDisabled]}
+                  onPress={handleSubmitLessonRating}
+                  disabled={rateSubmitting}
+                >
+                  <Text style={styles.submitBtnText}>{rateSubmitting ? 'Submitting...' : 'Submit'}</Text>
+                </TouchableOpacity>
+                {rateMessage && (
+                  <Text style={[styles.rateMessage, { color: rateMessage.success ? Colors.success : Colors.danger }]}>
+                    {rateMessage.text}
+                  </Text>
+                )}
+              </>
             )}
 
             {/* Reviews summary + list */}
@@ -1115,6 +1713,55 @@ export default function LessonScreen() {
         pdfUrl={pdfViewerUrl ?? activeLesson?.notes ?? ''}
         onClose={() => setPdfViewerVisible(false)}
       />
+
+      {/* Full-screen Quiz overlay — SAME quiz body as the inline tab (shared
+          state), with a Close button that returns to the normal inline view. */}
+      <Modal
+        visible={quizExpanded}
+        animationType="slide"
+        onRequestClose={() => { stopCodoVoice(); setQuizExpanded(false); }}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
+          <View style={styles.header}>
+            <Text style={[styles.lessonTitle, { flex: 1 }]} numberOfLines={1}>🧠 Quiz</Text>
+            <TouchableOpacity onPress={() => { stopCodoVoice(); setQuizExpanded(false); }}>
+              <Text style={{ color: Colors.danger, fontSize: Typography.sm, fontWeight: FontWeight.bold }}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl }}>
+            {quizBody}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Codo "you finished the lesson — take a quiz?" nudge. Shown when the
+          student tries to leave after watching ≥90% and hasn't done the quiz.
+          Accept → jump to the Quiz tab + stay. Not now → resume leaving. */}
+      <CodoPromptModal
+        visible={showQuizPrompt}
+        message={codoScripts.lesson_complete_prompt || ''}
+        acceptLabel="Take the Quiz 📝"
+        onAccept={() => {
+          setShowQuizPrompt(false);
+          pendingLeaveRef.current = null; // cancel the hold — we're staying
+          setActiveTab('quiz');
+        }}
+        rejectLabel="Not now"
+        onReject={() => {
+          setShowQuizPrompt(false);
+          const leave = pendingLeaveRef.current;
+          pendingLeaveRef.current = null;
+          if (leave) leave(); // resume the navigation we intercepted
+        }}
+      />
+
+      {/* Codo thank-you after the quiz is completed. Single dismiss button. */}
+      <CodoPromptModal
+        visible={showQuizThanks}
+        message={codoScripts.quiz_complete_thanks || ''}
+        rejectLabel="Yay! 🎉"
+        onReject={() => setShowQuizThanks(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -1170,6 +1817,7 @@ const styles = StyleSheet.create({
   nextBtnArrow: { color: '#a5b4fc', fontSize: 14, fontWeight: '800' },
 
   // Rate tab
+  ratePrompt: { color: 'rgba(255,255,255,0.7)', fontSize: 14, textAlign: 'center', marginBottom: 8 },
   rateStarsRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 16 },
   rateStar: { fontSize: 34, color: 'rgba(255,255,255,0.3)' },
   rateStarActive: { color: '#fbbf24' },
@@ -1179,6 +1827,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 12, color: '#fff', fontSize: 14,
     textAlignVertical: 'top', marginBottom: 14, minHeight: 80,
   },
+  rateFeedbackInputLocked: { opacity: 0.6 },
+  rateLockedBtn: { backgroundColor: 'rgba(255,255,255,0.1)' },
   rateMessage: { marginTop: 12, fontSize: 13, fontWeight: '600', textAlign: 'center' },
   rateReviewsSection: { borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 16, marginTop: 16 },
   rateSummaryRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 16 },
@@ -1197,6 +1847,62 @@ const styles = StyleSheet.create({
   rateReviewDate: { color: Colors.muted, fontSize: 11 },
   rateReviewStars: { color: '#fbbf24', fontSize: 12, marginBottom: 3 },
   rateReviewText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, lineHeight: 18 },
+
+  // Doubts / Q&A chat
+  chatHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: Spacing.lg },
+  chatRefreshBtn: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 9,
+    backgroundColor: 'rgba(108,71,255,0.12)', borderWidth: 1, borderColor: 'rgba(108,71,255,0.25)',
+  },
+  chatRefreshBtnText: { color: Colors.purple, fontSize: 12, fontWeight: '700' },
+  chatRoleTag: { color: Colors.muted, fontSize: 11, fontWeight: '500' },
+  // Bounded, independently-scrollable message list so a long conversation
+  // scrolls inside this box and the composer below it stays visible.
+  chatScroll: { maxHeight: 360, marginBottom: 12 },
+  chatList: { gap: 12, paddingBottom: 4 },
+  chatRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  chatRowMine: { flexDirection: 'row-reverse' },
+  chatAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  chatAvatarInstructor: { backgroundColor: '#f59e0b' },
+  chatAvatarMine: { backgroundColor: '#10b981' },
+  chatAvatarOther: { backgroundColor: Colors.primary },
+  chatAvatarText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  chatBubbleWrap: { maxWidth: '78%' },
+  chatWho: { fontSize: 10.5, color: Colors.muted, marginBottom: 3 },
+  chatWhoMine: { textAlign: 'right' },
+  chatBubble: { borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1 },
+  chatBubbleOther: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: Colors.border },
+  chatBubbleMine: { backgroundColor: 'rgba(108,71,255,0.15)', borderColor: 'rgba(108,71,255,0.3)' },
+  chatBubbleText: { color: Colors.text, fontSize: 13.5, lineHeight: 20 },
+  chatComposer: {
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 8,
+    borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 12,
+  },
+  chatInput: {
+    flex: 1, backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 10, color: '#fff', fontSize: 14,
+    maxHeight: 100, textAlignVertical: 'top',
+  },
+  chatSendBtn: {
+    backgroundColor: Colors.primary, borderRadius: 12,
+    paddingHorizontal: 18, paddingVertical: 12, alignItems: 'center', justifyContent: 'center',
+  },
+  chatSendBtnDisabled: { opacity: 0.5 },
+  chatSendBtnText: { color: Colors.white, fontSize: 14, fontWeight: '700' },
+
+  // "Connect with our Expert" button under Codo AI answers
+  expertBtn: {
+    alignSelf: 'flex-start', marginTop: 8,
+    backgroundColor: 'rgba(245,158,11,0.12)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)',
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6,
+  },
+  expertBtnDone: { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.4)' },
+  expertBtnText: { color: Colors.coin, fontSize: 12, fontWeight: '700' },
+
+  // "Codo is typing…" indicator while polling for the AI reply
+  chatTypingRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4 },
+  chatTypingText: { color: Colors.muted, fontSize: 13, fontStyle: 'italic' },
 
   // Exercise rank
   exRankBox: {

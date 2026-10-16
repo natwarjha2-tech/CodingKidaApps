@@ -28,6 +28,7 @@
       },
       "package": "com.codingkida.app",
       "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]
@@ -42,6 +43,8 @@
       "expo-status-bar",
       "expo-splash-screen",
       "expo-dev-client",
+      "expo-audio",
+      "./plugins/withMedia3Version",
       [
         "expo-notifications",
         {

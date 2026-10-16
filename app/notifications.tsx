@@ -34,6 +34,8 @@ function getIcon(type: string): string {
     case 'badge_lost':         return '📊';
     case 'password_changed':   return '🔒';
     case 'new_homework':       return '📝';
+    case 'lesson_question':    return '💬';
+    case 'lesson_answer':      return '💬';
     case 'coupon_redeemed':    return '🎁';
     case 'welcome':            return '🚀';
     case 'download_expiring':  return '⏳';
@@ -56,6 +58,8 @@ function getIconBg(type: string): string {
     case 'badge_lost':         return '#172554';
     case 'password_changed':   return '#450a0a';
     case 'new_homework':       return '#14532d';
+    case 'lesson_question':    return '#451a03';
+    case 'lesson_answer':      return '#2e1065';
     case 'coupon_redeemed':    return '#2e1065';
     case 'welcome':            return '#2e1065';
     case 'download_expiring':  return '#431407';
@@ -149,7 +153,24 @@ export default function NotificationsScreen() {
       patchNotificationsCache(queryClient, (list) => list.map(n => n.id === item.id ? { ...n, read: true } : n));
       markNotifAsRead(item.id); // fire & forget
     }
-    // Open detail popup (NO navigation / page redirect)
+
+    // Lesson Q&A notifications deep-link into the lesson's Doubts chat tab
+    // (mirrors desktop's "Open Chat"). Resolve the lessonId from metadata first,
+    // then fall back to parsing the action deeplink target ("/lesson/<id>").
+    if (item.type === 'lesson_question' || item.type === 'lesson_answer') {
+      const meta = (item.metadata || {}) as Record<string, unknown>;
+      let lessonId = typeof meta.lessonId === 'string' ? meta.lessonId : '';
+      if (!lessonId && item.action?.type === 'deeplink' && item.action.target) {
+        const m = item.action.target.match(/\/lesson\/([^/?#]+)/);
+        if (m) lessonId = m[1];
+      }
+      if (lessonId) {
+        router.push(`/lesson/${lessonId}?tab=asknow`);
+        return;
+      }
+    }
+
+    // Everything else → open detail popup (no navigation)
     setSelected({ ...item, read: true });
   }, [queryClient]);
 

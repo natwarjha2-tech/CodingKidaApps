@@ -78,6 +78,11 @@ export default function MyReportScreen() {
   const [todayMins, setTodayMins] = useState(0);
   const [weekMins, setWeekMins] = useState(0);
   const [calendarDays, setCalendarDays] = useState<{ date: string; day: number; mins: number; active: boolean; isToday: boolean }[]>([]);
+  // Full server-backed history (join → now), used to render ALL months.
+  const [fullHistory, setFullHistory] = useState<{ joinedAt: string | null; byDate: Record<string, number> }>({ joinedAt: null, byDate: {} });
+  // Absolute month index (year*12 + month) currently shown in the calendar.
+  // null = not yet initialised → defaults to the current month on first render.
+  const [calViewAbs, setCalViewAbs] = useState<number | null>(null);
   const [selectedBadgeType, setSelectedBadgeType] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Calendar day-detail popup (mirrors desktop showDayDetail)
@@ -130,6 +135,8 @@ export default function MyReportScreen() {
     AttendanceService.getTodayMins().then(setTodayMins);
     AttendanceService.getWeekMins().then(setWeekMins);
     AttendanceService.getLast30Days().then(setCalendarDays);
+    // Full join→now history from server (merged with local). Best-effort.
+    AttendanceService.getFullHistory().then(setFullHistory).catch(() => {});
   }, []);
 
   // Manual refresh — unified: refresh the ENTIRE app (all queries) + reload
@@ -238,50 +245,93 @@ export default function MyReportScreen() {
     return count;
   }, [calendarDays]);
 
-  // Monthly calendar (mirrors desktop _renderParentReport attendance calendar):
-  // Mon-first weekday columns, current-month grid with leading pad, real
-  // per-day minutes/active mapped by exact date, intensity tiers, today marker.
-  const monthCal = useMemo(() => {
+  // Monthly calendars (mirrors desktop _renderParentReport all-months view):
+  // Build ONE Mon-first grid per month from the student's JOIN month → the
+  // current month (newest first). Per-day minutes come from the merged
+  // server+local history (join→now); falls back to the last-30 local records
+  // and current month when no server history is available yet.
+  // Merged per-day minutes (server history + local last-30, MAX per day) and the
+  // navigable month bounds. minAbs = signup month (or 12 months back if unknown);
+  // curAbs = current month. Used by the single-month navigable calendar below.
+  const calData = useMemo(() => {
     const today = new Date();
     const curYear = today.getFullYear();
     const curMonth = today.getMonth(); // 0-based
-    const todayDate = today.getDate();
+    const curAbs = curYear * 12 + curMonth;
+    const todayKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-    // Map real attendance records by their exact calendar date (YYYY:M:D).
-    const byYmd: Record<string, { mins: number; active: boolean }> = {};
+    // Merge full-history byDate with last-30 local records (MAX minutes/day).
+    const byDate: Record<string, number> = { ...(fullHistory.byDate || {}) };
     for (const rec of calendarDays) {
       if (!rec || !rec.date) continue;
-      const p = String(rec.date).split('-');
-      if (p.length === 3) byYmd[`${Number(p[0])}:${Number(p[1])}:${Number(p[2])}`] = { mins: rec.mins || 0, active: !!rec.active };
+      const prev = byDate[rec.date] || 0;
+      if ((rec.mins || 0) > prev) byDate[rec.date] = rec.mins || 0;
     }
 
-    const daysInMonth = new Date(curYear, curMonth + 1, 0).getDate();
-    let monthActiveDays = 0;
-    for (let d = 1; d <= daysInMonth && d <= todayDate; d++) {
-      const rec = byYmd[`${curYear}:${curMonth + 1}:${d}`];
-      if (rec && rec.active) monthActiveDays++;
+    // Earliest navigable month: default 12 months back, then raise to the SIGNUP
+    // month if the server told us (so a new student can't page into empty months
+    // before they joined). Never above the current month.
+    let minAbs = curAbs - 11;
+    const joinSrc = fullHistory.joinedAt || Object.keys(byDate).sort()[0] || null;
+    if (joinSrc) {
+      const jd = new Date(joinSrc);
+      if (!isNaN(jd.getTime())) {
+        const joinAbs = jd.getFullYear() * 12 + jd.getMonth();
+        if (joinAbs > minAbs && joinAbs <= curAbs) minAbs = joinAbs;
+      }
     }
+    if (minAbs > curAbs) minAbs = curAbs;
 
-    const firstDow = new Date(curYear, curMonth, 1).getDay(); // 0=Sun
-    const startPad = firstDow === 0 ? 6 : firstDow - 1;       // Mon-first offset
+    return { byDate, curAbs, minAbs, todayKey };
+  }, [calendarDays, fullHistory]);
+
+  // Clamp the viewed month into [minAbs, curAbs] and default to the current month.
+  const viewAbs = useMemo(() => {
+    const def = calData.curAbs;
+    let v = calViewAbs == null ? def : calViewAbs;
+    if (v > calData.curAbs) v = calData.curAbs;
+    if (v < calData.minAbs) v = calData.minAbs;
+    return v;
+  }, [calViewAbs, calData]);
+
+  // Build the single month currently in view.
+  const viewedMonth = useMemo(() => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const y = Math.floor(viewAbs / 12);
+    const m = viewAbs - y * 12;
+    const { byDate, todayKey } = calData;
+
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const firstDow = new Date(y, m, 1).getDay();        // 0=Sun
+    const startPad = firstDow === 0 ? 6 : firstDow - 1; // Mon-first offset
 
     type Cell = { key: string; day: number; mins: number; active: boolean; isToday: boolean; isFuture: boolean; intensity: number } | null;
     const cells: Cell[] = [];
     for (let i = 0; i < startPad; i++) cells.push(null);
+    let monthActiveDays = 0;
     for (let d = 1; d <= daysInMonth; d++) {
-      const rec = byYmd[`${curYear}:${curMonth + 1}:${d}`];
-      const mins = rec ? rec.mins : 0;
-      const active = rec ? rec.active : false;
-      const isToday = d === todayDate;
-      const isFuture = d > todayDate;
+      const dateKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const mins = byDate[dateKey] || 0;
+      const active = mins > 0;
+      const isToday = dateKey === todayKey;
+      const isFuture = dateKey > todayKey;
+      if (active && !isFuture) monthActiveDays++;
       const intensity = mins === 0 ? 0 : mins < 15 ? 0.3 : mins < 30 ? 0.6 : 1;
-      const dateKey = `${curYear}-${String(curMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       cells.push({ key: dateKey, day: d, mins, active, isToday, isFuture, intensity });
     }
+    return { key: `${y}-${m}`, monthLabel: `${monthNames[m]} ${y}`, monthActiveDays, daysInMonth, cells };
+  }, [viewAbs, calData]);
 
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    return { cells, monthActiveDays, daysInMonth, monthLabel: `${monthNames[curMonth]} ${curYear}` };
-  }, [calendarDays]);
+  const atOldestMonth = viewAbs <= calData.minAbs;
+  const atNewestMonth = viewAbs >= calData.curAbs;
+  const navCalMonth = useCallback((delta: number) => {
+    setCalViewAbs(() => {
+      let next = viewAbs + delta;
+      if (next < calData.minAbs) next = calData.minAbs;
+      if (next > calData.curAbs) next = calData.curAbs;
+      return next;
+    });
+  }, [viewAbs, calData]);
 
   // Achievements grouped by badge type
   const achievements: Achievement[] = achievementsData?.achievements ?? [];
@@ -424,20 +474,38 @@ export default function MyReportScreen() {
               </View>
             </View>
 
-            {/* ─── Your Coding Journey — monthly calendar (mirrors desktop) ─── */}
+            {/* ─── Your Coding Journey — single month, ‹ › navigable (Teams-style) ─── */}
             <View style={styles.calendarSection}>
               <Text style={styles.calendarTitle}>🗓 Your Coding Journey</Text>
 
-              {/* Active Days strip (X / days-in-month) */}
-              <View style={styles.calActiveStrip}>
-                <Text style={styles.calActiveValue}>
-                  {monthCal.monthActiveDays} <Text style={styles.calActiveDenom}>/ {monthCal.daysInMonth}</Text>
-                </Text>
-                <Text style={styles.calActiveLabel}>Active Days</Text>
-              </View>
-
               <View style={styles.calBox}>
-                <Text style={styles.calMonthLabel}>{monthCal.monthLabel}</Text>
+                {/* Nav header: ‹ prev   Month Year   next › */}
+                <View style={styles.calNavRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    disabled={atOldestMonth}
+                    onPress={() => navCalMonth(-1)}
+                    style={[styles.calNavBtn, atOldestMonth && styles.calNavBtnDisabled]}
+                  >
+                    <Text style={[styles.calNavArrow, atOldestMonth && styles.calNavArrowDisabled]}>‹</Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.calNavCenter}>
+                    <Text style={styles.calNavMonth}>{viewedMonth.monthLabel}</Text>
+                    <Text style={styles.calNavActive}>
+                      {viewedMonth.monthActiveDays} active day{viewedMonth.monthActiveDays === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    disabled={atNewestMonth}
+                    onPress={() => navCalMonth(1)}
+                    style={[styles.calNavBtn, atNewestMonth && styles.calNavBtnDisabled]}
+                  >
+                    <Text style={[styles.calNavArrow, atNewestMonth && styles.calNavArrowDisabled]}>›</Text>
+                  </TouchableOpacity>
+                </View>
 
                 {/* Weekday header (Mon-first) */}
                 <View style={styles.calWeekRow}>
@@ -448,10 +516,10 @@ export default function MyReportScreen() {
 
                 {/* Month grid */}
                 <View style={styles.calGrid}>
-                  {monthCal.cells.map((cell, idx) => {
-                    if (!cell) return <View key={`pad-${idx}`} style={styles.calCellPad} />;
+                  {viewedMonth.cells.map((cell, idx) => {
+                    if (!cell) return <View key={`${viewedMonth.key}-pad-${idx}`} style={styles.calCellPad} />;
                     // Colour tiers (mirrors desktop): inactive / Started / Focused / On Fire.
-                    let bg = Colors.card2, borderColor = Colors.border, textColor = Colors.muted;
+                    let bg: string = Colors.card2, borderColor: string = Colors.border, textColor: string = Colors.muted;
                     if (cell.active && cell.intensity <= 0.3) { bg = 'rgba(124,58,237,0.20)'; borderColor = 'rgba(124,58,237,0.35)'; textColor = '#C4B5FD'; }
                     else if (cell.active && cell.intensity <= 0.6) { bg = '#7C3AED'; borderColor = 'rgba(168,85,247,0.5)'; textColor = '#fff'; }
                     else if (cell.active) { bg = '#A855F7'; borderColor = 'rgba(236,72,153,0.5)'; textColor = '#fff'; }
@@ -473,14 +541,14 @@ export default function MyReportScreen() {
                     );
                   })}
                 </View>
+              </View>
 
-                {/* Legend */}
-                <View style={styles.calLegend}>
-                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border }]} /><Text style={styles.calLegendText}>Inactive</Text></View>
-                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: 'rgba(124,58,237,0.35)' }]} /><Text style={styles.calLegendText}>Started</Text></View>
-                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#7C3AED' }]} /><Text style={styles.calLegendText}>Focused</Text></View>
-                  <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#A855F7' }]} /><Text style={styles.calLegendText}>On Fire</Text></View>
-                </View>
+              {/* Legend */}
+              <View style={styles.calLegend}>
+                <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: Colors.card2, borderWidth: 1, borderColor: Colors.border }]} /><Text style={styles.calLegendText}>Inactive</Text></View>
+                <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: 'rgba(124,58,237,0.35)' }]} /><Text style={styles.calLegendText}>Started</Text></View>
+                <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#7C3AED' }]} /><Text style={styles.calLegendText}>Focused</Text></View>
+                <View style={styles.calLegendItem}><View style={[styles.calLegendDot, { backgroundColor: '#A855F7' }]} /><Text style={styles.calLegendText}>On Fire</Text></View>
               </View>
             </View>
 
@@ -991,9 +1059,25 @@ const styles = StyleSheet.create({
   calActiveLabel: { color: Colors.muted, fontSize: 11, marginTop: 2 },
   calBox: {
     backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: Colors.border,
-    borderRadius: 14, padding: 14,
+    borderRadius: 14, padding: 14, marginBottom: 12,
   },
-  calMonthLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center', marginBottom: 10 },
+  calMonthHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10,
+  },
+  calMonthActive: { color: '#C4B5FD', fontSize: 12, fontWeight: '700' },
+  calMonthLabel: { color: '#94A3B8', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  // Month navigation header (‹ prev   Month Year   next ›)
+  calNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  calNavBtn: {
+    width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(124,58,237,0.15)', borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)',
+  },
+  calNavBtnDisabled: { backgroundColor: 'rgba(255,255,255,0.02)', borderColor: 'rgba(255,255,255,0.06)' },
+  calNavArrow: { color: '#C4B5FD', fontSize: 20, fontWeight: '700', lineHeight: 24 },
+  calNavArrowDisabled: { color: 'rgba(100,116,139,0.4)' },
+  calNavCenter: { alignItems: 'center', flex: 1 },
+  calNavMonth: { color: '#E9D5FF', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+  calNavActive: { color: '#64748B', fontSize: 11, fontWeight: '500', marginTop: 2 },
   calWeekRow: { flexDirection: 'row', marginBottom: 6 },
   calWeekday: { flex: 1, textAlign: 'center', color: '#64748B', fontSize: 10, fontWeight: '600' },
   calGrid: { flexDirection: 'row', flexWrap: 'wrap' },

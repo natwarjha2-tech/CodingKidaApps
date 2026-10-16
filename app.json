@@ -16,7 +16,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.codingkida.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "CodingKida needs camera access so you can turn on your video in live classes.",
+        "NSMicrophoneUsageDescription": "CodingKida needs microphone access so you can speak in live classes."
       }
     },
     "android": {
@@ -30,7 +32,9 @@
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -58,7 +62,8 @@
         {
           "photosPermission": "Allow CodingKida to access your photos for profile picture."
         }
-      ]
+      ],
+      "react-native-permissions"
     ],
     "experiments": {
       "typedRoutes": true

@@ -321,6 +321,17 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Live Classes banner — sits above the resume video card so students
+            can jump straight to a live/scheduled class. Always visible. */}
+        <TouchableOpacity style={styles.liveBanner} onPress={() => router.push('/live' as never)} activeOpacity={0.85}>
+          <View style={styles.liveBannerDot} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.liveBannerTitle}>🔴 Live Classes</Text>
+            <Text style={styles.liveBannerSub}>Join your teacher’s live session</Text>
+          </View>
+          <Text style={styles.liveBannerChevron}>›</Text>
+        </TouchableOpacity>
+
         {/* Continue Learning (enriched — mirrors desktop) */}
         {resumeData && (
           <>
@@ -604,6 +615,19 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: L.line,
     shadowColor: L.blue, shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 2,
   },
+  // Live Classes banner (above the resume card)
+  liveBanner: {
+    marginHorizontal: 16, marginBottom: 14,
+    backgroundColor: L.card,
+    borderRadius: 16, paddingVertical: 14, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)',
+  },
+  liveBannerDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444' },
+  liveBannerTitle: { color: L.ink, fontSize: 15, fontWeight: '900' },
+  liveBannerSub: { color: L.sub, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  liveBannerChevron: { color: L.sub, fontSize: 22, fontWeight: '700' },
+
   continueThumbnail: {
     width: 62, height: 62, borderRadius: 14,
     backgroundColor: '#241B3D', alignItems: 'center', justifyContent: 'center',

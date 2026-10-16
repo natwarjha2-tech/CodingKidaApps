@@ -9,3 +9,15 @@ export { leaderboardApi, coinsApi, achievementsApi, aiMentorApi, weeklyStreakApi
 export type { LessonReactionData, LessonReview, LessonReviewsData, LessonChatMessage, LessonChatData, AiSource, LessonHelpData, AttendanceDay } from './misc.api';
 export { referralApi } from './referral.api';
 export type { ReferralInfo } from './referral.api';
+export { liveApi } from './live.api';
+export type {
+  LiveClass,
+  ChimeMeeting,
+  ChimeAttendee,
+  LiveJoinData,
+  LiveChatMessage as LiveRoomChatMessage,
+  LiveParticipant,
+  LiveRecording,
+  LiveClientType,
+  ModerationType,
+} from './live.api';

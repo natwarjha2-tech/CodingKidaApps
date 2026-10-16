@@ -253,6 +253,8 @@ export default function RootLayout() {
             <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="live/index" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="live/[id]" options={{ animation: 'slide_from_bottom' }} />
           </Stack>
         </QueryClientProvider>
       </SafeAreaProvider>

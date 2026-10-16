@@ -69,6 +69,11 @@ export function getHelpCache(kind: string, itemId: string, stage: string): Cache
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _activePlayer: any = null;
 let _playToken = 0; // bumps on every stop/new play to invalidate stale callbacks
+// Separate token for the prefix→solution→postfix CHAIN. Mirrors desktop
+// `_codoChainToken`: only a real stop (stopCodoVoice) bumps it. Playing the
+// next clip in the chain must NOT bump it (otherwise the chain cancels itself
+// after the first part — the bug where only the prefix was heard).
+let _chainToken = 0;
 
 /**
  * Convert help/answer text (which may contain markdown/code) into clean, natural
@@ -110,9 +115,10 @@ export function plainForSpeech(text: string): string {
     .trim();
 }
 
-/** Stop any currently playing Codo audio. */
+/** Stop any currently playing Codo audio AND cancel any in-flight chain. */
 export function stopCodoVoice(): void {
   _playToken++;
+  _chainToken++; // truly end a prefix→solution→postfix sequence, not just the clip
   const p = _activePlayer;
   _activePlayer = null;
   if (p) {
@@ -180,31 +186,83 @@ export async function speakCodoSolution(
 ): Promise<void> {
   const prefix = codoScriptText('codo_solution_prefix', '');
   const postfix = codoScriptText('codo_solution_postfix', '');
-  // Capture the current token; if stopCodoVoice() is called (e.g. question
-  // change), _playToken bumps and we abort the remaining parts of the chain.
-  const myToken = _playToken;
+
+  // Starting a NEW sequence cancels any previous one and stops current audio.
+  // This bumps _chainToken, so capture the fresh value AFTER stopping — that
+  // value identifies THIS chain. A later stopCodoVoice() (question change /
+  // Stop tap) bumps _chainToken again and the guards below abort the rest.
+  stopCodoVoice();
+  const myChain = _chainToken;
+
   onStateChange?.(true);
   try {
     if (prefix) await speakCodoAwait(prefix);
-    if (myToken !== _playToken) return;
+    if (myChain !== _chainToken) return;          // cancelled during prefix
     await speakCodoAwait(solutionText);
-    if (myToken !== _playToken) return;
+    if (myChain !== _chainToken) return;          // cancelled during solution
     if (postfix) await speakCodoAwait(postfix);
   } finally {
     onStateChange?.(false);
   }
 }
 
-/** Promise that resolves when a single speakCodo playback finishes. */
+/**
+ * Play ONE clip and resolve ONLY when it finishes — the chain building block.
+ * Mirrors desktop `_codoSpeakAsync`: it does NOT call speakCodo (which would
+ * bump _playToken/_chainToken and cancel the sequence). It fetches/caches the
+ * mp3 itself, plays it, and resolves on finish. Never rejects.
+ */
 function speakCodoAwait(text: string): Promise<void> {
   return new Promise<void>((resolve) => {
     let settled = false;
     const done = () => { if (!settled) { settled = true; resolve(); } };
-    speakCodo(text, (playing) => { if (!playing) done(); }).then((started) => {
-      if (!started) done(); // nothing played — move on
-    });
-    // Safety timeout so the chain never hangs.
-    setTimeout(done, 30000);
+
+    (async () => {
+      const spoken = plainForSpeech(text);
+      if (!spoken) { done(); return; }
+      const Audio = getAudioModule();
+      if (!Audio) { done(); return; } // expo-audio not in this build
+
+      // 1) base64 mp3 (cache first, else POST /api/tts).
+      let b64 = _ttsCache[spoken];
+      if (!b64) {
+        try {
+          const res = await ttsApi.synthesize(spoken);
+          if (res?.success && res.audio) { b64 = res.audio; _ttsCache[spoken] = b64; }
+        } catch { /* nothing to play */ }
+      }
+      if (!b64) { done(); return; }
+
+      try {
+        // Stop the previous CLIP without bumping any token (that would cancel
+        // our own chain). Just pause/remove the current player.
+        const prev = _activePlayer;
+        _activePlayer = null;
+        if (prev) { try { prev.pause?.(); } catch {} try { prev.remove?.(); } catch {} }
+
+        // 2) write base64 → temp mp3 (RN can't play a data: URL).
+        const path = `${FileSystem.cacheDirectory}codo-tts-${Date.now()}.mp3`;
+        await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
+
+        // 3) play; resolve when it finishes.
+        const player = Audio.createAudioPlayer({ uri: path });
+        _activePlayer = player;
+        const finish = () => {
+          if (_activePlayer === player) _activePlayer = null;
+          try { player.remove?.(); } catch {}
+          done();
+        };
+        const sub = player.addListener?.('playbackStatusUpdate', (status: { didJustFinish?: boolean }) => {
+          if (status?.didJustFinish) { try { sub?.remove?.(); } catch {} finish(); }
+        });
+        player.play?.();
+      } catch {
+        done();
+      }
+    })();
+
+    // Safety: never hang the chain if the finish event never fires.
+    setTimeout(done, 60000);
   });
 }
 

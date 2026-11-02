@@ -17,6 +17,14 @@ export type PlayData = {
   qualityUrls: Record<string, string>;
   hlsQualities: string[];
   notes?: string;
+  /** Media id (used to scope HLS cookie auth). Null when the lesson has no media. */
+  mediaId?: string | null;
+  /** Stable CloudFront HLS master-playlist URL, present only when HLS is ready
+   *  AND CloudFront is configured; null otherwise. The client still needs the
+   *  signed cookies from getLessonHlsAuth before it can actually fetch it. */
+  hlsMasterUrl?: string | null;
+  /** 'none' | 'processing' | 'ready' | 'failed' — HLS pipeline state for the media. */
+  hlsStatus?: string;
 };
 
 type Entry = { at: number; data: PlayData };

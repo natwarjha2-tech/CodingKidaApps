@@ -6,7 +6,7 @@ import { useQueryClient, useQuery } from '@tanstack/react-query';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useCourseStore, useAuthStore } from '@/store';
 import { useQuiz, useExercise, useCoins } from '@/hooks';
-import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, coursesApi, lessonChatApi, lessonHelpApi, codoScriptsApi, type LessonReviewsData, type LessonChatMessage } from '@/api';
+import { quizApi, exerciseApi, progressApi, weeklyStreakApi, mediaApi, lessonApi, feedbackApi, leaderboardApi, coursesApi, lessonChatApi, lessonHelpApi, codoScriptsApi, cloudFrontCookieHeader, type LessonReviewsData, type LessonChatMessage } from '@/api';
 import { StorageService, DownloadService, XPService, XP_REWARDS, seedHelpCache, stopCodoVoice } from '@/services';
 import { userScopedKey } from '@/services/storage.service';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
@@ -212,11 +212,14 @@ export default function LessonScreen() {
       .getLessonPlay(lessonId)
       .then((res) => {
         if (cancelled || !res?.success || !res.lesson) return;
-        const data = {
+        const data: PlayData = {
           videoUrl: res.lesson.videoUrl || '',
           qualityUrls: res.lesson.qualityUrls || {},
           hlsQualities: res.lesson.hlsQualities || [],
           notes: res.lesson.notes,
+          mediaId: res.lesson.mediaId ?? null,
+          hlsMasterUrl: res.lesson.hlsMasterUrl ?? null,
+          hlsStatus: res.lesson.hlsStatus ?? 'none',
         };
         // Only cache a FULLY-READY response. If the lesson has a video but its
         // qualities aren't ready yet (still processing on the server), caching
@@ -258,11 +261,14 @@ export default function LessonScreen() {
         .getLessonPlay(next.id)
         .then((res) => {
           if (!res?.success || !res.lesson) return;
-          const data = {
+          const data: PlayData = {
             videoUrl: res.lesson.videoUrl || '',
             qualityUrls: res.lesson.qualityUrls || {},
             hlsQualities: res.lesson.hlsQualities || [],
             notes: res.lesson.notes,
+            mediaId: res.lesson.mediaId ?? null,
+            hlsMasterUrl: res.lesson.hlsMasterUrl ?? null,
+            hlsStatus: res.lesson.hlsStatus ?? 'none',
           };
           // Don't warm the cache with a still-processing (empty-qualities)
           // response — same reasoning as the main fetch above.
@@ -286,6 +292,35 @@ export default function LessonScreen() {
   const playHlsQualities = (playData && playData.hlsQualities.length > 0)
     ? playData.hlsQualities
     : activeLesson?.hlsQualities;
+
+  // ── HLS (adaptive) playback via CloudFront signed cookies ──────────────────
+  // When the server reports HLS is ready (play data carries a CloudFront master
+  // URL + hlsStatus 'ready'), fetch the short-lived signed cookies that
+  // authorize the whole hls/<mediaId>/* prefix, then hand the master .m3u8 +
+  // a Cookie header to the player. ExoPlayer (react-native-video on Android)
+  // forwards source.headers on every manifest + segment request, so one header
+  // authorizes the entire adaptive stream. If anything is missing/unready, we
+  // leave hlsSource null and the player falls back to the MP4 qualityUrls.
+  const [hlsSource, setHlsSource] = useState<{ url: string; cookieHeader: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setHlsSource(null);
+    if (!lessonId) return;
+    // Only bother asking for cookies when the server already told us HLS is
+    // ready + CloudFront-backed (hlsMasterUrl present). Otherwise skip the call.
+    if (!playData || playData.hlsStatus !== 'ready' || !playData.hlsMasterUrl) return;
+
+    coursesApi
+      .getLessonHlsAuth(lessonId)
+      .then((res) => {
+        if (cancelled || !res?.success || !res.hlsReady || !res.masterUrl) return;
+        const cookieHeader = cloudFrontCookieHeader(res.cookies);
+        if (!cookieHeader) return; // no cookies → fall back to MP4
+        setHlsSource({ url: res.masterUrl, cookieHeader });
+      })
+      .catch(() => { /* non-fatal — player falls back to MP4 qualities */ });
+    return () => { cancelled = true; };
+  }, [lessonId, playData?.hlsStatus, playData?.hlsMasterUrl]);
 
   // ── Next lesson (continuous across modules) — for the "Next Lesson" button ──
   // Build the course-wide ordered sequence and find the lesson right after this
@@ -1186,6 +1221,8 @@ export default function LessonScreen() {
           qualityUrls={playQualityUrls}
           onQualityChange={(q, url) => { setSelectedQuality(q); setSelectedVideoUrl(url); }}
           hlsQualities={playHlsQualities}
+          hlsMasterUrl={hlsSource?.url}
+          hlsCookieHeader={hlsSource?.cookieHeader}
           onComplete={handleVideoComplete}
           onViewCounted={handleViewCounted}
           onProgress={handleVideoProgress}

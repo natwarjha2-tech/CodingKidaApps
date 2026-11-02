@@ -9,6 +9,13 @@ interface VideoPlayerProps {
   title?: string;
   qualityUrls?: Record<string, string>;
   hlsQualities?: string[];
+  /** CloudFront HLS master-playlist URL. When present (plus a cookie header),
+   *  the player streams this adaptive source and lets ExoPlayer pick the
+   *  rendition automatically — the manual MP4 quality menu is hidden. */
+  hlsMasterUrl?: string;
+  /** `Cookie` request-header value carrying the CloudFront signed cookies.
+   *  Forwarded on every HLS manifest + segment request. */
+  hlsCookieHeader?: string;
   onProgress?: (percent: number) => void;
   onComplete?: () => void;
   /** Fired once after ~30s of actual watch time (mirrors desktop view counting). */
@@ -22,7 +29,7 @@ interface VideoPlayerProps {
   loading?: boolean;
 }
 
-export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProgress, onComplete, onViewCounted, onQualityChange, loading }: VideoPlayerProps) {
+export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, hlsMasterUrl, hlsCookieHeader, onProgress, onComplete, onViewCounted, onQualityChange, loading }: VideoPlayerProps) {
   const videoRef = useRef<any>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -37,12 +44,18 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
   const lastProgressTime = useRef(0);
   const viewCounted = useRef(false);
 
+  // HLS adaptive playback: when we have a master URL + signed-cookie header, we
+  // stream that single adaptive source and let the player switch renditions
+  // automatically — so the manual MP4 quality menu is hidden in HLS mode.
+  const useHls = !!(hlsMasterUrl && hlsCookieHeader);
+
   // Quality — only real available qualities (no "Original") when the video has
   // quality URLs; otherwise fall back to the raw video so it never breaks.
   const availableQualities = hlsQualities ?? Object.keys(qualityUrls ?? {});
   const hasQualities = availableQualities.length > 0;
   const qualities = hasQualities ? availableQualities : ['Original'];
-  const hasMultipleQualities = qualities.length > 1;
+  // In HLS mode the player adapts automatically, so never show the manual menu.
+  const hasMultipleQualities = !useHls && qualities.length > 1;
 
   // Default quality: prefer 720 → else the first available → else Original(raw).
   const pickDefault = () => {
@@ -67,12 +80,14 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
     setCurrentQuality(_def.q);
     setCurrentUrl(_def.url);
     // A new source means we're buffering again until the first frame is ready.
-    if (_def.url) setBuffering(true);
+    // (In HLS mode _def.url may be empty, but the HLS master is the real source.)
+    if (_def.url || hlsMasterUrl) setBuffering(true);
     // Tell the parent the (new) default quality so downloads use it even if the
-    // user never opens the quality menu.
+    // user never opens the quality menu. Note: downloads still use the MP4
+    // qualities (HLS segments aren't a single downloadable file).
     onQualityChange?.(_def.q, _def.url);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [_def.q, _def.url]);
+  }, [_def.q, _def.url, hlsMasterUrl]);
 
   const handleLoad = useCallback((data: OnLoadData) => {
     setDuration(data.duration);
@@ -120,7 +135,14 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
     onQualityChange?.(q, url); // tell parent so download uses the selected quality
   };
 
-  if (!currentUrl) {
+  // Effective playback source: the HLS master (with the signed-cookie header)
+  // when available, else the signed MP4 (current selected quality / raw).
+  const effectiveUrl = useHls ? (hlsMasterUrl as string) : currentUrl;
+  const videoSource = useHls
+    ? { uri: hlsMasterUrl as string, headers: { Cookie: hlsCookieHeader as string } }
+    : { uri: currentUrl };
+
+  if (!effectiveUrl) {
     // While the signed URL is still being fetched (sign-on-play), show a loading
     // spinner — NOT "Video not available" (that only shows once the fetch is done
     // and there's genuinely no video). Mirrors YouTube's brief loading state.
@@ -147,9 +169,9 @@ export function VideoPlayer({ videoUrl, title, qualityUrls, hlsQualities, onProg
       {/* Video with native controls — guaranteed visible on all platforms */}
       <View style={styles.videoContainer}>
         <Video
-          key={currentUrl}
+          key={effectiveUrl}
           ref={videoRef}
-          source={{ uri: currentUrl }}
+          source={videoSource}
           style={styles.video}
           controls={true}
           resizeMode="contain"

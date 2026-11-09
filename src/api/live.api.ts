@@ -84,6 +84,8 @@ export interface LiveChatMessage {
   replyToMessageId: string | null;
   createdAt: string;
   isMine?: boolean;
+  /** Per-message reaction aggregate (history). `mine` = emojis I reacted with. */
+  reactions?: { counts: Record<string, number>; mine: string[] };
 }
 
 /** A participant row (roster). */
@@ -109,6 +111,22 @@ export interface LiveRecording {
   id: string;
   url: string | null;
   createdAt?: string;
+  duration?: number | null;
+  [key: string]: unknown;
+}
+
+/** Student "My recordings" tree: course → classes → recordings. */
+export interface MyRecordingClass {
+  classId?: string;
+  title: string;
+  endedAt?: string | null;
+  recordings: { url: string | null; duration?: number | null; [key: string]: unknown }[];
+  [key: string]: unknown;
+}
+export interface MyRecordingCourse {
+  courseId?: string;
+  courseTitle: string;
+  classes: MyRecordingClass[];
   [key: string]: unknown;
 }
 
@@ -226,6 +244,23 @@ export const liveApi = {
       )
       .then((r) => r.data)
       .catch(() => ({ success: false as const })),
+
+  /** A removed student asks the host to let them rejoin. */
+  rejoinRequest: (id: string) =>
+    apiClient
+      .post<{ success: boolean; pending?: boolean; message?: string }>(
+        `/api/live/classes/${encodeURIComponent(id)}/rejoin-request`,
+        {}
+      )
+      .then((r) => r.data),
+
+  /** Student: recordings of past classes across enrolled courses. */
+  getMyRecordings: () =>
+    apiClient
+      .get<{ success: boolean; courses: MyRecordingCourse[]; message?: string }>(
+        '/api/live/classes/recordings/mine'
+      )
+      .then((r) => r.data),
 
   // ── Roster ──
   /** Current participants (roster). */

@@ -4,39 +4,65 @@
  * (modules/expo-aws-chime). Students join, see/hear the teacher + peers, toggle
  * their OWN mic + camera, chat, react, and are subject to host moderation.
  *
- * REAL-TIME model (differs from desktop by necessity):
- *  - A/V + presence (join/leave) + video tiles come from the native Chime SDK
- *    events — true real-time.
- *  - Chat, reactions, and host-moderation ENFORCEMENT ride on REST polling
- *    (the native module has no Chime data-message bridge). Chat polls
- *    GET /chat?after=; moderation polls GET /participants for THIS user's
- *    audioBlocked/videoBlocked/chatBlocked flags and enforces them locally.
+ * REAL-TIME model (same as desktop):
+ *  - A/V, presence (join/leave), mute state and video tiles come from native
+ *    Chime events.
+ *  - Chat, class reactions, per-message reactions, host moderation, removal and
+ *    the recording indicator ride on Chime DATA MESSAGES using the SAME topics
+ *    and JSON payloads as desktop, so desktop <-> mobile interoperate live.
+ *  - REST stays the source of truth / backfill: chat is persisted via REST and
+ *    polled slowly as a safety net; moderation flags + removal are also checked
+ *    against GET /participants; class end is also confirmed via GET /classes/:id.
  *
- * Host-only features (start/end, recording, screen-share, moderation CONTROLS)
- * are intentionally absent — mobile is student-only.
+ * Host-only features (start/end, recording control, screen-share, moderation
+ * CONTROLS) are intentionally absent — mobile is student-only.
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, BackHandler,
-  ScrollView, TextInput, KeyboardAvoidingView, Platform, Image,
+  ScrollView, TextInput, KeyboardAvoidingView, Platform, Image, Linking,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PermissionsAndroid } from 'react-native';
 import {
   startMeeting, stopMeeting, mute, unmute, startLocalVideo, stopLocalVideo,
-  addListener, ExpoAWSChimeView, type VideoTileEvent,
+  sendDataMessage, addListener, ExpoAWSChimeView, type VideoTileEvent,
 } from '../../modules/expo-aws-chime';
 import {
   liveApi, type LiveJoinData, type LiveParticipant, type LiveRoomChatMessage,
 } from '@/api';
 import { useAuthStore } from '@/store';
 import { Colors } from '@/theme';
+import { markLiveJoined, markLiveLeft } from '@/utils/liveJoined';
 
-// Request mic + camera at runtime (Android). Chime needs RECORD_AUDIO to connect
-// audio at all; CAMERA only when the student turns their camera on, but we ask
-// for both up front so the first toggle is instant. Uses the built-in
-// PermissionsAndroid API (no extra dependency). iOS prompts natively on first use.
+// ── Protocol (must match desktop) ────────────────────────────────────────────
+const TOPIC_CHAT = 'ck-live-chat';
+const TOPIC_REACT = 'ck-live-react';
+const TOPIC_MSG_REACT = 'ck-live-msg-react';
+const TOPIC_MOD = 'ck-live-mod';
+const TOPIC_REC = 'ck-live-rec';
+
+// Classroom reaction set (mirrors desktop LRC_REACTIONS).
+const REACTIONS = ['👍', '👎', '✋', '👏', '🎉', '❤️'];
+
+// Chime MeetingSessionStatusCode values that mean "the meeting is over for everyone".
+const STATUS_CALL_ENDED = 6;
+const STATUS_SERVER_HUNGUP = 16;
+
+// After a connection drop, give Chime's auto-reconnect this long before we show
+// the "Connection lost" screen (mirrors desktop _LR_FAIL_GRACE_MS).
+const FAIL_GRACE_MS = 20000;
+
+type RoomState =
+  | 'joining' | 'connecting' | 'connected'
+  | 'error' | 'left' | 'ended' | 'failed' | 'removed';
+type ConnBanner = 'connected' | 'reconnecting' | 'poor' | 'dropped';
+type ReactionAgg = Record<string, { counts: Record<string, number>; mine: Record<string, boolean> }>;
+
+// Request mic + camera at runtime (Android). Audio is required to join; camera is
+// requested lazily when the student turns it on, but asked up front so the first
+// toggle is instant. iOS prompts natively on first use.
 async function requestMediaPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
@@ -44,20 +70,25 @@ async function requestMediaPermissions(): Promise<boolean> {
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
       PermissionsAndroid.PERMISSIONS.CAMERA,
     ]);
-    // Audio is required to join; camera can be granted later, so only block on audio.
     return res[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
   } catch {
     return false;
   }
 }
 
-type RoomState = 'joining' | 'connecting' | 'connected' | 'error' | 'left';
-
-// Classroom reaction set (mirrors desktop LRC_REACTIONS).
-const REACTIONS = ['👍', '👎', '✋', '👏', '🎉'];
+async function ensureCameraPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const p = PermissionsAndroid.PERMISSIONS.CAMERA;
+    if (await PermissionsAndroid.check(p)) return true;
+    return (await PermissionsAndroid.request(p)) === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
 
 // Strip Chime's screen-share "#content" suffix so a share pseudo-attendee is
-// never counted as a person (mirrors desktop _lrpBaseUserId / skip).
+// never counted as a person (mirrors desktop _lrBaseUser).
 function baseUserId(externalUserId: string | undefined): string {
   if (!externalUserId) return '';
   const i = externalUserId.indexOf('#content');
@@ -76,6 +107,36 @@ function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
+// Apply one reaction toggle to the aggregate (pure).
+function applyReactionDelta(
+  prev: ReactionAgg, messageId: string, emoji: string, reacted: boolean, byMe: boolean
+): ReactionAgg {
+  const cur = prev[messageId] || { counts: {}, mine: {} };
+  const counts = { ...cur.counts };
+  const mine = { ...cur.mine };
+  if (reacted) {
+    counts[emoji] = (counts[emoji] || 0) + 1;
+    if (byMe) mine[emoji] = true;
+  } else {
+    counts[emoji] = Math.max(0, (counts[emoji] || 0) - 1);
+    if (counts[emoji] === 0) delete counts[emoji];
+    if (byMe) delete mine[emoji];
+  }
+  return { ...prev, [messageId]: { counts, mine } };
+}
+
+function seedReactions(m: LiveRoomChatMessage): ReactionAgg[string] | null {
+  if (!m.reactions) return null;
+  const counts: Record<string, number> = {};
+  Object.keys(m.reactions.counts || {}).forEach((e) => {
+    const n = m.reactions!.counts[e] | 0;
+    if (n > 0) counts[e] = n;
+  });
+  const mine: Record<string, boolean> = {};
+  (m.reactions.mine || []).forEach((e) => { mine[e] = true; });
+  return { counts, mine };
+}
+
 export default function LiveRoomScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const classId = String(id || '');
@@ -84,13 +145,19 @@ export default function LiveRoomScreen() {
   const [state, setState] = useState<RoomState>('joining');
   const [joinData, setJoinData] = useState<LiveJoinData | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [needsSettings, setNeedsSettings] = useState(false);
+  const [conn, setConn] = useState<ConnBanner>('connected');
+  const [rejoinSent, setRejoinSent] = useState(false);
+  const [rejoinBusy, setRejoinBusy] = useState(false);
 
-  // A/V state
-  const [micMuted, setMicMuted] = useState(false);
+  // A/V state — students JOIN MUTED (desktop parity).
+  const [micMuted, setMicMuted] = useState(true);
   const [camOn, setCamOn] = useState(false);
   const [videoTiles, setVideoTiles] = useState<VideoTileEvent[]>([]);
+  const [attMap, setAttMap] = useState<Record<string, string>>({}); // attendeeId -> externalUserId
+  const [mutedUsers, setMutedUsers] = useState<Record<string, boolean>>({});
 
-  // Host-moderation (enforced on THIS student via participants poll).
+  // Host-moderation (enforced on THIS student).
   const [micLocked, setMicLocked] = useState(false);
   const [camLocked, setCamLocked] = useState(false);
   const [chatLocked, setChatLocked] = useState(false);
@@ -100,113 +167,292 @@ export default function LiveRoomScreen() {
   const [roster, setRoster] = useState<Record<string, LiveParticipant>>({});
   const [toasts, setToasts] = useState<{ key: string; text: string }[]>([]);
   const [showPeople, setShowPeople] = useState(false);
+  const [recording, setRecording] = useState(false);
 
   // Chat
   const [showChat, setShowChat] = useState(false);
   const [messages, setMessages] = useState<LiveRoomChatMessage[]>([]);
   const [chatText, setChatText] = useState('');
-  const [floatReactions, setFloatReactions] = useState<{ key: string; emoji: string }[]>([]);
+  const [reactions, setReactions] = useState<ReactionAgg>({});
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [floatReactions, setFloatReactions] = useState<{ key: string; emoji: string; dx: number }[]>([]);
 
   // Timer
   const [elapsed, setElapsed] = useState('00:00');
 
+  // ── Refs (read inside long-lived listeners without re-subscribing) ─────────
+  const stateRef = useRef<RoomState>('joining');
   const leavingRef = useRef(false);
+  const cleanedRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const connectIdRef = useRef(0);
   const chatCursorRef = useRef<string | undefined>(undefined);
   const chatSeenRef = useRef<Set<string>>(new Set());
+  const chatScrollRef = useRef<ScrollView>(null);
   const startedAtRef = useRef<number>(0);
+  const attMapRef = useRef<Record<string, string>>({});
+  const rosterRef = useRef<Record<string, LiveParticipant>>({});
+  const leftSetRef = useRef<Set<string>>(new Set());
+  const reactionsRef = useRef<ReactionAgg>({});
+  const camOnRef = useRef(false);
+  const micLockedRef = useRef(false);
+  const camLockedRef = useRef(false);
+  const chatLockedRef = useRef(false);
+  const failTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenMeRef = useRef(false);
+  const missRef = useRef(0);
+  const hostUserIdRef = useRef('');
+  const dmSeenRef = useRef(false); // has a native data message ever arrived?
 
   const hostUserId = joinData?.liveClass?.hostUserId || '';
+  hostUserIdRef.current = hostUserId;
+  reactionsRef.current = reactions;
+  rosterRef.current = roster;
+  camOnRef.current = camOn;
 
-  // ── Leave: stop Chime + tell backend + navigate back ──────────────────────
+  const setRoomState = useCallback((s: RoomState) => {
+    stateRef.current = s;
+    setState(s);
+  }, []);
+
+  const addToast = useCallback((text: string) => {
+    const key = `${Date.now()}-${Math.random()}`;
+    setToasts((prev) => [...prev, { key, text }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.key !== key)), 3200);
+  }, []);
+
+  const updateAttMap = useCallback((attendeeIds: string[], externalUserIds: string[]) => {
+    const next = { ...attMapRef.current };
+    attendeeIds.forEach((a, i) => { if (a && externalUserIds[i]) next[a] = externalUserIds[i]; });
+    attMapRef.current = next;
+    setAttMap(next);
+  }, []);
+
+  const userIdForAttendee = useCallback((attendeeId: string): string => {
+    return baseUserId(attMapRef.current[attendeeId]);
+  }, []);
+
+  // ── Teardown: stop Chime + tell backend (exactly once per session) ─────────
+  const teardown = useCallback(async () => {
+    if (cleanedRef.current) return;
+    cleanedRef.current = true;
+    if (failTimerRef.current) { clearTimeout(failTimerRef.current); failTimerRef.current = null; }
+    try { await stopMeeting(); } catch { /* ignore */ }
+    try { if (classId) await liveApi.leave(classId); } catch { /* best-effort */ }
+    markLiveLeft(classId);
+  }, [classId]);
+
   const leave = useCallback(async () => {
     if (leavingRef.current) return;
     leavingRef.current = true;
-    setState('left');
-    try { await stopMeeting(); } catch { /* ignore */ }
-    try { if (classId) await liveApi.leave(classId); } catch { /* best-effort */ }
+    setRoomState('left');
+    await teardown();
     router.back();
+  }, [teardown, setRoomState]);
+
+  // ── Terminal states ────────────────────────────────────────────────────────
+  const goEnded = useCallback(() => {
+    if (leavingRef.current || ['ended', 'removed', 'left'].includes(stateRef.current)) return;
+    setRoomState('ended');
+    teardown();
+  }, [teardown, setRoomState]);
+
+  const goFailed = useCallback(() => {
+    if (leavingRef.current || ['ended', 'removed', 'left', 'failed'].includes(stateRef.current)) return;
+    setRoomState('failed');
+    teardown();
+  }, [teardown, setRoomState]);
+
+  const goRemoved = useCallback(() => {
+    if (leavingRef.current || ['ended', 'removed', 'left'].includes(stateRef.current)) return;
+    setRoomState('removed');
+    teardown();
+  }, [teardown, setRoomState]);
+
+  // Is the class over on the server? (confirms an ambiguous drop / removal.)
+  const classIsOver = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await liveApi.getById(classId);
+      const lc = res?.liveClass ?? res;
+      return lc?.status === 'ended' || lc?.status === 'cancelled';
+    } catch {
+      return false;
+    }
   }, [classId]);
 
-  // ── Join + connect to Chime on mount ──────────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    if (!classId) { setState('error'); setErrorMsg('Missing class id.'); return; }
-
-    (async () => {
-      try {
-        const data = await liveApi.join(classId, 'STUDENT_MOBILE');
-        if (cancelled) return;
-        if (!data?.success || !data.meeting || !data.attendee) {
-          setState('error');
-          setErrorMsg(data?.message || 'Could not join the class.');
-          return;
-        }
-        setJoinData(data);
-        const startedIso = data.liveClass?.startedAt;
-        const startedMs = startedIso ? Date.parse(startedIso) : NaN;
-        startedAtRef.current = isNaN(startedMs) ? Date.now() : startedMs;
-        setState('connecting');
-
-        // Ask for mic (required) + camera before connecting. If mic is denied we
-        // can't join at all.
-        const granted = await requestMediaPermissions();
-        if (cancelled) return;
-        if (!granted) {
-          setState('error');
-          setErrorMsg('Microphone permission is required to join a live class.');
-          return;
-        }
-
-        // Hand the backend's Chime Meeting + Attendee to the native SDK. The
-        // module's field names match our ChimeMeeting/ChimeAttendee exactly.
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await startMeeting(data.meeting as any, data.attendee as any);
-        } catch (e) {
-          if (cancelled) return;
-          setState('error');
-          setErrorMsg((e as Error)?.message || 'Could not connect to the class.');
-        }
-      } catch (e) {
-        if (cancelled) return;
-        setState('error');
-        setErrorMsg((e as Error)?.message || 'Could not join the class.');
+  // ── Moderation (instant via data message; also reconciled from the poll) ───
+  const applyModerationToSelf = useCallback((type: string, blocked: boolean) => {
+    if (type === 'audio') {
+      micLockedRef.current = blocked;
+      setMicLocked(blocked);
+      if (blocked) { mute().catch(() => {}); setMicMuted(true); }
+      addToast(blocked ? 'Host muted your mic' : 'Host unmuted your mic');
+    } else if (type === 'video') {
+      camLockedRef.current = blocked;
+      setCamLocked(blocked);
+      if (blocked && camOnRef.current) {
+        stopLocalVideo().catch(() => {});
+        camOnRef.current = false;
+        setCamOn(false);
       }
-    })();
+      addToast(blocked ? 'Host turned off your camera' : 'Host allowed your camera');
+    } else if (type === 'chat') {
+      chatLockedRef.current = blocked;
+      setChatLocked(blocked);
+      addToast(blocked ? 'Host turned off your chat' : 'Host turned on your chat');
+    }
+  }, [addToast]);
 
-    return () => { cancelled = true; };
-  }, [classId]);
+  // ── Chat helpers ───────────────────────────────────────────────────────────
+  const appendMessages = useCallback((incoming: LiveRoomChatMessage[], fromPoll = false) => {
+    if (fromPoll && incoming.length > 0) {
+      const last = incoming[incoming.length - 1];
+      if (last?.createdAt) chatCursorRef.current = last.createdAt;
+    }
+    const fresh = incoming.filter((m) => m?.id && !chatSeenRef.current.has(m.id));
+    if (fresh.length === 0) return;
+    fresh.forEach((m) => chatSeenRef.current.add(m.id));
+    setMessages((prev) => [...prev, ...fresh]);
+    const seeds: ReactionAgg = {};
+    fresh.forEach((m) => { const s = seedReactions(m); if (s) seeds[m.id] = s; });
+    if (Object.keys(seeds).length) setReactions((prev) => ({ ...seeds, ...prev }));
+  }, []);
 
-  // ── Native Chime event listeners ──────────────────────────────────────────
+  const floatReaction = useCallback((emoji: string) => {
+    const key = `${Date.now()}-${Math.random()}`;
+    const dx = Math.floor(Math.random() * 120) - 60;
+    setFloatReactions((prev) => [...prev, { key, emoji, dx }]);
+    setTimeout(() => setFloatReactions((prev) => prev.filter((r) => r.key !== key)), 2100);
+  }, []);
+
+  // ── Join + connect (also used by "Rejoin") ─────────────────────────────────
+  const connect = useCallback(async () => {
+    if (!classId) { setRoomState('error'); setErrorMsg('Missing class id.'); return; }
+    const myConnectId = ++connectIdRef.current;
+    const stale = () => unmountedRef.current || connectIdRef.current !== myConnectId;
+
+    // Fresh session state.
+    cleanedRef.current = false;
+    leavingRef.current = false;
+    seenMeRef.current = false;
+    missRef.current = 0;
+    leftSetRef.current = new Set();
+    attMapRef.current = {};
+    chatSeenRef.current = new Set();
+    chatCursorRef.current = undefined;
+    micLockedRef.current = false; camLockedRef.current = false; chatLockedRef.current = false;
+    camOnRef.current = false;
+    setAttMap({}); setVideoTiles([]); setMessages([]); setReactions({}); setMutedUsers({});
+    setMicMuted(true); setCamOn(false);
+    setMicLocked(false); setCamLocked(false); setChatLocked(false);
+    setPresentIds([]); setRecording(false); setConn('connected');
+    setErrorMsg(''); setNeedsSettings(false); setRejoinSent(false);
+    setRoomState('joining');
+
+    try {
+      const data = await liveApi.join(classId, 'STUDENT_MOBILE');
+      if (stale()) {
+        // Navigated away mid-join: undo the attendance row we just created.
+        if (data?.success) liveApi.leave(classId).catch(() => {});
+        return;
+      }
+      if (!data?.success || !data.meeting || !data.attendee) {
+        setRoomState('error');
+        setErrorMsg(data?.message || 'Could not join the class.');
+        return;
+      }
+      setJoinData(data);
+      const startedMs = data.liveClass?.startedAt ? Date.parse(data.liveClass.startedAt) : NaN;
+      startedAtRef.current = isNaN(startedMs) ? Date.now() : startedMs;
+      markLiveJoined(classId);
+      setRoomState('connecting');
+
+      const granted = await requestMediaPermissions();
+      if (stale()) { liveApi.leave(classId).catch(() => {}); return; }
+      if (!granted) {
+        liveApi.leave(classId).catch(() => {});
+        setRoomState('error');
+        setNeedsSettings(true);
+        setErrorMsg('Microphone permission is required to join a live class. Please allow it in Settings.');
+        return;
+      }
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await startMeeting(data.meeting as any, data.attendee as any);
+      } catch (e) {
+        if (stale()) return;
+        liveApi.leave(classId).catch(() => {});
+        setRoomState('error');
+        const raw = (e as Error)?.message || '';
+        // The Chime SDK ships only non-functional x86 stubs: x86/x86_64 emulators
+        // (and rare x86 devices) can't run live classes. Show a clear message.
+        if (/UnsatisfiedLinkError|initNative|No implementation found/i.test(raw)) {
+          setErrorMsg(
+            'Live classes are not supported on this device. Please use a real Android phone ' +
+            '(Android emulators on PC are not supported for live audio/video).'
+          );
+        } else {
+          setErrorMsg(raw || 'Could not connect to the class.');
+        }
+      }
+    } catch (e) {
+      if (stale()) return;
+      const msg = (e as Error)?.message || 'Could not join the class.';
+      // Host previously removed this student: offer "ask to rejoin" (desktop parity).
+      if (/removed you/i.test(msg)) { setRoomState('removed'); return; }
+      setRoomState('error');
+      setErrorMsg(msg);
+    }
+  }, [classId, setRoomState]);
+
+  // ── Native Chime event listeners (subscribed once; handlers read refs) ─────
   useEffect(() => {
-    const addToast = (text: string) => {
-      const key = `${Date.now()}-${Math.random()}`;
-      setToasts((prev) => [...prev, { key, text }]);
-      setTimeout(() => setToasts((prev) => prev.filter((t) => t.key !== key)), 3200);
+    const clearFailTimer = () => {
+      if (failTimerRef.current) { clearTimeout(failTimerRef.current); failTimerRef.current = null; }
+    };
+    const armFailTimer = () => {
+      if (failTimerRef.current) return;
+      failTimerRef.current = setTimeout(() => {
+        failTimerRef.current = null;
+        goFailed();
+      }, FAIL_GRACE_MS);
     };
 
     const subs = [
       addListener('onMeetingStart', () => {
-        setState('connected');
+        if (stateRef.current !== 'connecting') return;
+        clearFailTimer();
+        setConn('connected');
+        setRoomState('connected');
+        // Join MUTED by default (desktop parity): actually mute the mic, not just the icon.
+        mute().catch(() => {});
+        setMicMuted(true);
       }),
-      addListener('onMeetingEnd', () => {
-        // Session ended (class ended / dropped). If we didn't initiate leave,
-        // treat as the class closing.
-        if (!leavingRef.current) {
-          setState('left');
-          router.back();
-        }
+      addListener('onConnectionState', (p) => {
+        if (['ended', 'removed', 'left', 'failed'].includes(stateRef.current)) return;
+        setConn(p.state);
+        if (p.state === 'connected') clearFailTimer();
+        else if (p.state === 'reconnecting' || p.state === 'dropped') armFailTimer();
+      }),
+      addListener('onMeetingEnd', async (p) => {
+        if (leavingRef.current || ['ended', 'removed', 'left', 'failed'].includes(stateRef.current)) return;
+        const code = p.sessionStatus;
+        if (code === STATUS_CALL_ENDED || code === STATUS_SERVER_HUNGUP) { goEnded(); return; }
+        // Ambiguous stop: ask the server whether the class is over.
+        if (await classIsOver()) goEnded(); else goFailed();
       }),
       addListener('onAttendeesJoin', (p) => {
+        updateAttMap(p.attendeeIds || [], p.externalUserIds || []);
         const ids = (p.externalUserIds || [])
           .filter((eid) => !isContent(eid))
           .map(baseUserId)
           .filter(Boolean);
         if (ids.length === 0) return;
+        ids.forEach((u) => leftSetRef.current.delete(u));
         setPresentIds((prev) => [...new Set([...prev, ...ids])]);
-        // Toast for peers (not ourselves).
         ids.forEach((uid) => {
-          if (uid !== myUserId) addToast(`${roster[uid]?.name || 'A participant'} joined`);
+          if (uid !== myUserId) addToast(`${rosterRef.current[uid]?.name || 'A participant'} joined`);
         });
       }),
       addListener('onAttendeesLeave', (p) => {
@@ -215,32 +461,99 @@ export default function LiveRoomScreen() {
           .map(baseUserId)
           .filter(Boolean);
         if (ids.length === 0) return;
+        ids.forEach((u) => leftSetRef.current.add(u));
         setPresentIds((prev) => prev.filter((x) => !ids.includes(x)));
         ids.forEach((uid) => {
-          if (uid !== myUserId) addToast(`${roster[uid]?.name || 'A participant'} left`);
+          if (uid !== myUserId) addToast(`${rosterRef.current[uid]?.name || 'A participant'} left`);
+        });
+      }),
+      addListener('onAttendeesMute', (p) => {
+        setMutedUsers((prev) => {
+          const next = { ...prev };
+          (p.attendeeIds || []).forEach((a) => { const u = userIdForAttendee(a); if (u) next[u] = true; });
+          return next;
+        });
+      }),
+      addListener('onAttendeesUnmute', (p) => {
+        setMutedUsers((prev) => {
+          const next = { ...prev };
+          (p.attendeeIds || []).forEach((a) => { const u = userIdForAttendee(a); if (u) next[u] = false; });
+          return next;
         });
       }),
       addListener('onAddVideoTile', (tile) => {
-        setVideoTiles((prev) => {
-          if (prev.some((t) => t.tileId === tile.tileId)) return prev;
-          return [...prev, tile];
-        });
+        setVideoTiles((prev) => (prev.some((t) => t.tileId === tile.tileId) ? prev : [...prev, tile]));
       }),
       addListener('onRemoveVideoTile', (tile) => {
         setVideoTiles((prev) => prev.filter((t) => t.tileId !== tile.tileId));
       }),
-      addListener('onError', (e) => {
-        if (!leavingRef.current) {
-          setState('error');
-          setErrorMsg(e?.error || 'A live-class error occurred.');
+      addListener('onDataMessage', (m) => {
+        let p: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        dmSeenRef.current = true;
+        try { p = JSON.parse(m.text); } catch { return; }
+        if (!p) return;
+        switch (m.topic) {
+          case TOPIC_CHAT:
+            if (p.id) appendMessages([p as LiveRoomChatMessage]);
+            break;
+          case TOPIC_REACT:
+            if (p.reaction) floatReaction(String(p.reaction));
+            break;
+          case TOPIC_MSG_REACT:
+            if (p.messageId && p.reaction && p.userId && p.userId !== myUserId) {
+              setReactions((prev) => applyReactionDelta(prev, p.messageId, p.reaction, !!p.reacted, false));
+            }
+            break;
+          case TOPIC_REC:
+            setRecording(!!p.recording);
+            break;
+          case TOPIC_MOD: {
+            if (p.action === 'removed' && p.targetUserId) {
+              leftSetRef.current.add(p.targetUserId);
+              setPresentIds((prev) => prev.filter((x) => x !== p.targetUserId));
+              if (p.targetUserId === myUserId) goRemoved();
+              break;
+            }
+            if (!p.type) break;
+            // The host never blocks themselves; only non-hosts enforce.
+            if (hostUserIdRef.current && hostUserIdRef.current === myUserId) break;
+            if (p.scope === 'all') applyModerationToSelf(p.type, !!p.blocked);
+            else if (p.targetUserId === myUserId) applyModerationToSelf(p.type, !!p.blocked);
+            break;
+          }
         }
+      }),
+      addListener('onError', (e) => {
+        if (leavingRef.current || stateRef.current === 'left') return;
+        setRoomState('error');
+        setErrorMsg(e?.error || 'A live-class error occurred.');
       }),
     ];
 
-    return () => { subs.forEach((s) => { try { s.remove(); } catch { /* ignore */ } }); };
-    // roster/myUserId read inside closures; re-subscribe when roster identity map changes
-    // so toasts can use fresh names. Safe because listeners are idempotent.
-  }, [myUserId, roster]);
+    return () => {
+      subs.forEach((s) => { try { s.remove(); } catch { /* ignore */ } });
+      if (failTimerRef.current) { clearTimeout(failTimerRef.current); failTimerRef.current = null; }
+    };
+  }, [
+    myUserId, addToast, appendMessages, applyModerationToSelf, classIsOver, floatReaction,
+    goEnded, goFailed, goRemoved, setRoomState, updateAttMap, userIdForAttendee,
+  ]);
+
+  // ── Start joining on mount; always leave cleanly on unmount ────────────────
+  useEffect(() => {
+    unmountedRef.current = false;
+    connect();
+    return () => {
+      unmountedRef.current = true;
+      if (!cleanedRef.current) {
+        cleanedRef.current = true;
+        stopMeeting().catch(() => {});
+        if (classId) liveApi.leave(classId).catch(() => {});
+        markLiveLeft(classId);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classId]);
 
   // ── Elapsed timer (from class startedAt) ──────────────────────────────────
   useEffect(() => {
@@ -251,100 +564,128 @@ export default function LiveRoomScreen() {
     return () => clearInterval(iv);
   }, [state]);
 
-  // ── Roster identity + host-moderation self-enforcement (poll) ─────────────
+  // ── Roster + moderation/removal reconcile (poll; data messages are the fast path)
   useEffect(() => {
     if (state !== 'connected' || !classId) return;
     let stop = false;
 
-    const applyModeration = (me: LiveParticipant | undefined) => {
-      if (!me) return;
-      // Audio: if host blocked me, force mute + lock the mic button.
-      if (me.audioBlocked && !micLocked) {
-        setMicLocked(true);
-        mute().catch(() => {});
-        setMicMuted(true);
-      } else if (!me.audioBlocked && micLocked) {
-        setMicLocked(false);
-      }
-      // Video: if host blocked me, force camera off + lock.
-      if (me.videoBlocked && !camLocked) {
-        setCamLocked(true);
-        if (camOn) { stopLocalVideo().catch(() => {}); setCamOn(false); }
-      } else if (!me.videoBlocked && camLocked) {
-        setCamLocked(false);
-      }
-      // Chat: lock/unlock the input.
-      setChatLocked(!!me.chatBlocked);
-    };
-
     const poll = async () => {
-      try {
-        const res = await liveApi.getParticipants(classId);
-        if (stop || !res?.success) return;
-        const map: Record<string, LiveParticipant> = {};
-        for (const p of res.participants || []) {
-          if (p?.userId) map[p.userId] = p;
+      const res = await liveApi.getParticipants(classId);
+      if (stop || !res?.success) return;
+      const map: Record<string, LiveParticipant> = {};
+      for (const p of res.participants || []) if (p?.userId) map[p.userId] = p;
+      setRoster(map);
+
+      // Presence: server roster minus anyone Chime told us already left.
+      const ids = Object.keys(map).filter((u) => !leftSetRef.current.has(u));
+      if (myUserId && !ids.includes(myUserId)) ids.push(myUserId);
+      setPresentIds((prev) => {
+        const next = [...new Set([...ids, ...prev.filter((u) => !leftSetRef.current.has(u) && map[u])])];
+        return next;
+      });
+
+      const me = map[myUserId];
+      if (me) {
+        seenMeRef.current = true;
+        missRef.current = 0;
+        if (!!me.audioBlocked !== micLockedRef.current) applyModerationToSelf('audio', !!me.audioBlocked);
+        if (!!me.videoBlocked !== camLockedRef.current) applyModerationToSelf('video', !!me.videoBlocked);
+        if (!!me.chatBlocked !== chatLockedRef.current) applyModerationToSelf('chat', !!me.chatBlocked);
+      } else if (seenMeRef.current) {
+        // Server no longer lists me: removed by host (or class ended). Require 2 misses.
+        missRef.current += 1;
+        if (missRef.current >= 2) {
+          if (await classIsOver()) goEnded(); else goRemoved();
         }
-        setRoster(map);
-        // Seed presence from the server for anyone the native events missed.
-        setPresentIds((prev) => [...new Set([...prev, ...Object.keys(map)])]);
-        applyModeration(map[myUserId]);
-      } catch { /* ignore */ }
+      }
     };
 
     poll();
-    const iv = setInterval(poll, 4000);
+    const iv = setInterval(poll, 5000);
     return () => { stop = true; clearInterval(iv); };
-  }, [state, classId, myUserId, micLocked, camLocked, camOn]);
+  }, [state, classId, myUserId, applyModerationToSelf, classIsOver, goEnded, goRemoved]);
 
-  // ── Chat (REST poll) ──────────────────────────────────────────────────────
-  const appendMessages = useCallback((incoming: LiveRoomChatMessage[]) => {
-    const fresh = incoming.filter((m) => m?.id && !chatSeenRef.current.has(m.id));
-    if (fresh.length === 0) return;
-    fresh.forEach((m) => chatSeenRef.current.add(m.id));
-    const last = fresh[fresh.length - 1];
-    if (last?.createdAt) chatCursorRef.current = last.createdAt;
-    setMessages((prev) => [...prev, ...fresh]);
-  }, []);
+  // ── Class-ended watcher (fallback if Chime doesn't signal the end) ─────────
+  useEffect(() => {
+    if (state !== 'connected' || !classId) return;
+    const iv = setInterval(async () => {
+      if (await classIsOver()) goEnded();
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [state, classId, classIsOver, goEnded]);
 
+  // ── Chat backfill poll (data messages are the real-time path) ──────────────
   useEffect(() => {
     if (state !== 'connected' || !classId) return;
     let stop = false;
-
     const poll = async () => {
       try {
         const res = await liveApi.getChat(classId, chatCursorRef.current);
         if (stop || !res?.success) return;
-        appendMessages(res.messages || []);
+        appendMessages(res.messages || [], true);
       } catch { /* ignore */ }
     };
-
     poll(); // initial history
-    const iv = setInterval(poll, 2500);
+    // Poll every 3s until the native data-message channel proves it works (it
+    // needs the rebuilt dev client); once data messages flow, back off to ~9s.
+    let tick = 0;
+    const iv = setInterval(() => {
+      tick += 1;
+      if (dmSeenRef.current && tick % 3 !== 0) return;
+      poll();
+    }, 3000);
     return () => { stop = true; clearInterval(iv); };
   }, [state, classId, appendMessages]);
 
   const sendChat = useCallback(async () => {
     const text = chatText.trim();
-    if (!text || !classId || chatLocked) return;
+    if (!text || !classId) return;
+    if (chatLocked) { addToast('Chat is turned off by the host'); return; }
     setChatText('');
     try {
+      // 1) Persist via REST (authoritative: gives the stored message + id).
       const res = await liveApi.sendChat(classId, text);
-      if (res?.success && res.message) appendMessages([res.message]);
-    } catch {
-      setChatText(text); // restore on failure
+      if (!res?.success || !res.message) throw new Error('Message not sent.');
+      // 2) Show locally, 3) broadcast so everyone (desktop + mobile) sees it live.
+      appendMessages([res.message]);
+      sendDataMessage(TOPIC_CHAT, JSON.stringify(res.message));
+    } catch (e) {
+      setChatText(text); // restore so nothing is lost
+      addToast((e as Error)?.message || 'Message not sent. Check your connection.');
     }
-  }, [chatText, classId, chatLocked, appendMessages]);
+  }, [chatText, classId, chatLocked, appendMessages, addToast]);
 
   // ── Reactions ─────────────────────────────────────────────────────────────
+  // Free-floating class reaction: local float + real-time broadcast (no REST,
+  // the backend reaction endpoint is per-message only — same as desktop).
   const sendReaction = useCallback((emoji: string) => {
-    if (!classId) return;
-    // Local float immediately (snappy), then persist best-effort.
-    const key = `${Date.now()}-${Math.random()}`;
-    setFloatReactions((prev) => [...prev, { key, emoji }]);
-    setTimeout(() => setFloatReactions((prev) => prev.filter((r) => r.key !== key)), 2100);
-    liveApi.react(classId, '', emoji).catch(() => {});
-  }, [classId]);
+    floatReaction(emoji);
+    sendDataMessage(TOPIC_REACT, JSON.stringify({ reaction: emoji }));
+  }, [floatReaction]);
+
+  // Per-message reaction toggle: optimistic -> broadcast -> persist -> reconcile/rollback.
+  const toggleMsgReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!messageId || !emoji || !classId) return;
+    setPickerFor(null);
+    const currentlyMine = !!reactionsRef.current[messageId]?.mine?.[emoji];
+    const next = !currentlyMine;
+    const broadcast = (reacted: boolean) =>
+      sendDataMessage(TOPIC_MSG_REACT, JSON.stringify({ messageId, reaction: emoji, reacted, userId: myUserId }));
+
+    setReactions((prev) => applyReactionDelta(prev, messageId, emoji, next, true));
+    broadcast(next);
+    const res = await liveApi.react(classId, messageId, emoji);
+    if (!res?.success) {
+      setReactions((prev) => applyReactionDelta(prev, messageId, emoji, currentlyMine, true));
+      broadcast(currentlyMine);
+      return;
+    }
+    const serverReacted = (res as { reacted?: boolean }).reacted;
+    if (typeof serverReacted === 'boolean' && serverReacted !== next) {
+      setReactions((prev) => applyReactionDelta(prev, messageId, emoji, serverReacted, true));
+      broadcast(serverReacted);
+    }
+  }, [classId, myUserId]);
 
   // ── Mic / camera toggles ──────────────────────────────────────────────────
   const toggleMic = useCallback(async () => {
@@ -364,40 +705,92 @@ export default function LiveRoomScreen() {
       return;
     }
     try {
-      if (camOn) { await stopLocalVideo(); setCamOn(false); }
-      else { await startLocalVideo(); setCamOn(true); }
+      if (camOn) { await stopLocalVideo(); setCamOn(false); return; }
+      if (!(await ensureCameraPermission())) {
+        Alert.alert('Camera permission needed', 'Allow camera access in Settings to turn your camera on.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]);
+        return;
+      }
+      await startLocalVideo();
+      setCamOn(true);
     } catch {
-      Alert.alert('Camera error', 'Could not toggle the camera. Check permissions.');
+      Alert.alert('Camera error', 'Could not toggle the camera.');
     }
   }, [camLocked, camOn]);
 
-  // Hardware back = leave cleanly.
+  const askRejoin = useCallback(async () => {
+    if (rejoinBusy || rejoinSent) return;
+    setRejoinBusy(true);
+    try {
+      const res = await liveApi.rejoinRequest(classId);
+      if (res?.success) setRejoinSent(true);
+      else addToast(res?.message || 'Could not send the request.');
+    } catch (e) {
+      addToast((e as Error)?.message || 'Could not send the request.');
+    } finally {
+      setRejoinBusy(false);
+    }
+  }, [classId, rejoinBusy, rejoinSent, addToast]);
+
+  // Hardware back = leave cleanly (or just go back from a terminal screen).
   useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { leave(); return true; });
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (['ended', 'failed', 'removed', 'error'].includes(stateRef.current)) {
+        teardown().finally(() => router.back());
+      } else {
+        leave();
+      }
+      return true;
+    });
     return () => sub.remove();
-  }, [leave]);
+  }, [leave, teardown]);
 
   const title = joinData?.liveClass?.title || 'Live Class';
   const participantCount = presentIds.length;
 
-  // Sort tiles: screen-share first, then teacher, then others, local last-ish.
+  // Tiles: screen-share first, then remote (teacher first), local last.
   const sortedTiles = useMemo(() => {
     const copy = [...videoTiles];
     copy.sort((a, b) => {
       if (a.isScreenShare !== b.isScreenShare) return a.isScreenShare ? -1 : 1;
-      if (a.isLocal !== b.isLocal) return a.isLocal ? 1 : -1; // local last
+      if (a.isLocal !== b.isLocal) return a.isLocal ? 1 : -1;
+      const ah = !a.isLocal && baseUserId(attMap[a.attendeeId]) === hostUserId ? 0 : 1;
+      const bh = !b.isLocal && baseUserId(attMap[b.attendeeId]) === hostUserId ? 0 : 1;
+      if (ah !== bh) return ah - bh;
       return a.tileId - b.tileId;
     });
     return copy;
-  }, [videoTiles]);
+  }, [videoTiles, attMap, hostUserId]);
+
+  const tileUserId = useCallback((t: VideoTileEvent): string => {
+    if (t.isLocal) return myUserId;
+    return baseUserId(attMap[t.attendeeId]);
+  }, [attMap, myUserId]);
+
+  const nameFor = useCallback((uid: string): string => {
+    const base = roster[uid]?.name || '';
+    if (uid === myUserId) return `${base || 'You'}${base ? ' (You)' : ''}`;
+    if (uid === hostUserId) return `${base || 'Teacher'}${base ? ' · Teacher' : ''}`;
+    return base || 'Participant';
+  }, [roster, myUserId, hostUserId]);
 
   function tileLabel(t: VideoTileEvent): string {
-    if (t.isScreenShare) return 'Screen';
-    if (t.isLocal) return 'You';
-    const uid = baseUserId(t.attendeeId);
-    if (hostUserId && (t.attendeeId.indexOf(hostUserId) === 0)) return 'Teacher';
-    return roster[uid]?.name || 'Participant';
+    const uid = tileUserId(t);
+    if (t.isScreenShare) return uid && roster[uid]?.name ? `${roster[uid].name}'s screen` : 'Screen share';
+    return uid ? nameFor(uid) : (t.isLocal ? 'You' : 'Participant');
   }
+
+  // Everyone present who has no camera tile gets an avatar tile (desktop parity).
+  const avatarUsers = useMemo(() => {
+    const withCam = new Set(
+      sortedTiles.filter((t) => !t.isScreenShare).map((t) => tileUserId(t)).filter(Boolean)
+    );
+    return presentIds.filter((u) => !withCam.has(u));
+  }, [presentIds, sortedTiles, tileUserId]);
+
+  const isMutedUser = (uid: string) => (uid === myUserId ? micMuted : mutedUsers[uid] === true);
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (state === 'error') {
@@ -407,7 +800,15 @@ export default function LiveRoomScreen() {
           <Text style={styles.stageEmoji}>⚠️</Text>
           <Text style={styles.statusText}>Couldn’t join</Text>
           <Text style={styles.subText}>{errorMsg}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => router.back()} activeOpacity={0.8}>
+          {needsSettings && (
+            <TouchableOpacity style={styles.retryBtn} onPress={() => Linking.openSettings()} activeOpacity={0.8}>
+              <Text style={styles.retryText}>Open Settings</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={[styles.retryBtn, styles.secondaryBtn]} onPress={connect} activeOpacity={0.8}>
+            <Text style={styles.retryText}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.retryBtn, styles.secondaryBtn]} onPress={() => router.back()} activeOpacity={0.8}>
             <Text style={styles.retryText}>Go back</Text>
           </TouchableOpacity>
         </View>
@@ -428,17 +829,29 @@ export default function LiveRoomScreen() {
     );
   }
 
+  // Terminal result card (class ended / connection lost / removed).
+  const overlay =
+    state === 'ended' ? {
+      icon: '✅', title: 'Class ended', msg: 'The teacher has ended this class.',
+    } : state === 'failed' ? {
+      icon: '📡', title: 'Connection lost', msg: "We couldn't stay connected to the class. You can try to rejoin.",
+    } : state === 'removed' ? {
+      icon: '🚫', title: 'Removed from class',
+      msg: rejoinSent ? 'Request sent. The host can let you back in.' : 'The host has removed you from this class.',
+    } : null;
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top bar: live dot + title + timer + people + leave */}
+      {/* Top bar: live dot + title + rec + timer + people + leave */}
       <View style={styles.topBar}>
         <View style={styles.topLeft}>
           <View style={styles.liveDot} />
           <Text style={styles.topTitle} numberOfLines={1}>{title}</Text>
+          {recording && <View style={styles.recBadge}><Text style={styles.recText}>● REC</Text></View>}
         </View>
         <View style={styles.topRight}>
           <Text style={styles.timer}>{elapsed}</Text>
-          <TouchableOpacity style={styles.peopleBtn} onPress={() => setShowPeople((v) => !v)} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.peopleBtn} onPress={() => { setShowPeople((v) => !v); setShowChat(false); }} activeOpacity={0.8}>
             <Text style={styles.peopleText}>👥 {participantCount}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.leaveBtn} onPress={leave} activeOpacity={0.8}>
@@ -447,38 +860,58 @@ export default function LiveRoomScreen() {
         </View>
       </View>
 
+      {/* Connection banner */}
+      {conn !== 'connected' && !overlay && (
+        <View style={[styles.banner, conn === 'poor' ? styles.bannerWarn : styles.bannerErr]}>
+          <Text style={styles.bannerText}>
+            {conn === 'poor' ? 'Weak connection — video may lag' : 'Connection lost. Trying to reconnect…'}
+          </Text>
+        </View>
+      )}
+
       {/* Video stage */}
       <View style={styles.stage}>
-        {sortedTiles.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.stageEmoji}>🎧</Text>
-            <Text style={styles.subText}>Connected — audio only right now.</Text>
-            <Text style={styles.subText}>Video appears when someone turns on their camera.</Text>
-          </View>
-        ) : (
-          <ScrollView contentContainerStyle={styles.tileGrid}>
-            {sortedTiles.map((t) => (
-              <View
-                key={t.tileId}
-                style={[styles.tile, t.isScreenShare && styles.tileWide]}
-              >
-                <ExpoAWSChimeView tileId={t.tileId} isLocal={t.isLocal} style={styles.tileVideo} />
+        <ScrollView contentContainerStyle={styles.tileGrid}>
+          {sortedTiles.map((t) => (
+            <View key={t.tileId} style={[styles.tile, t.isScreenShare && styles.tileWide]}>
+              <ExpoAWSChimeView tileId={t.tileId} isLocal={t.isLocal} style={styles.tileVideo} />
+              <View style={styles.tileLabelWrap}>
+                <Text style={styles.tileLabelText} numberOfLines={1}>
+                  {!t.isScreenShare && isMutedUser(tileUserId(t)) ? '🔇 ' : ''}{tileLabel(t)}
+                </Text>
+              </View>
+            </View>
+          ))}
+          {avatarUsers.map((uid) => {
+            const info = roster[uid];
+            const name = nameFor(uid);
+            return (
+              <View key={`av-${uid}`} style={[styles.tile, styles.avatarTile]}>
+                {info?.avatarUrl ? (
+                  <Image source={{ uri: info.avatarUrl }} style={styles.avatarBig} />
+                ) : (
+                  <View style={styles.avatarBig}>
+                    <Text style={styles.avatarBigTxt}>{(name[0] || '?').toUpperCase()}</Text>
+                  </View>
+                )}
                 <View style={styles.tileLabelWrap}>
-                  <Text style={styles.tileLabelText} numberOfLines={1}>{tileLabel(t)}</Text>
+                  <Text style={styles.tileLabelText} numberOfLines={1}>
+                    {isMutedUser(uid) ? '🔇 ' : ''}{name}
+                  </Text>
                 </View>
               </View>
-            ))}
-          </ScrollView>
-        )}
+            );
+          })}
+        </ScrollView>
 
         {/* Floating reactions */}
         <View pointerEvents="none" style={styles.reactionFloatLayer}>
           {floatReactions.map((r) => (
-            <Text key={r.key} style={styles.reactionFloat}>{r.emoji}</Text>
+            <Text key={r.key} style={[styles.reactionFloat, { marginLeft: r.dx }]}>{r.emoji}</Text>
           ))}
         </View>
 
-        {/* Join/leave toasts */}
+        {/* Join/leave/moderation toasts */}
         <View pointerEvents="none" style={styles.toastLayer}>
           {toasts.map((t) => (
             <View key={t.key} style={styles.toast}><Text style={styles.toastText}>{t.text}</Text></View>
@@ -515,7 +948,11 @@ export default function LiveRoomScreen() {
           <Text style={styles.dockLabel}>{camLocked ? 'Locked' : camOn ? 'Stop Cam' : 'Camera'}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.dockBtn} onPress={() => setShowChat((v) => !v)} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.dockBtn}
+          onPress={() => { setShowChat((v) => !v); setShowPeople(false); }}
+          activeOpacity={0.8}
+        >
           <Text style={styles.dockIcon}>💬</Text>
           <Text style={styles.dockLabel}>Chat</Text>
         </TouchableOpacity>
@@ -540,8 +977,8 @@ export default function LiveRoomScreen() {
               })
               .map((uid) => {
                 const info = roster[uid];
-                const name = uid === myUserId ? `${info?.name || 'You'} (You)` : (info?.name || 'Participant');
-                const isHost = uid === hostUserId;
+                const name = nameFor(uid);
+                const hasCam = sortedTiles.some((t) => !t.isScreenShare && tileUserId(t) === uid);
                 return (
                   <View key={uid} style={styles.personRow}>
                     {info?.avatarUrl ? (
@@ -550,7 +987,7 @@ export default function LiveRoomScreen() {
                       <View style={styles.personAvatar}><Text style={styles.personAvatarTxt}>{(name[0] || '?').toUpperCase()}</Text></View>
                     )}
                     <Text style={styles.personName} numberOfLines={1}>{name}</Text>
-                    {isHost && <View style={styles.hostBadge}><Text style={styles.hostBadgeTxt}>Host</Text></View>}
+                    <Text style={styles.personMedia}>{isMutedUser(uid) ? '🔇' : '🎙'} {hasCam ? '📹' : '📵'}</Text>
                   </View>
                 );
               })}
@@ -562,26 +999,62 @@ export default function LiveRoomScreen() {
       {/* Chat panel */}
       {showChat && (
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.panel}
         >
           <View style={styles.panelHead}>
             <Text style={styles.panelTitle}>Chat</Text>
             <TouchableOpacity onPress={() => setShowChat(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
           </View>
-          <ScrollView style={styles.panelBody}>
+          <ScrollView
+            ref={chatScrollRef}
+            style={styles.panelBody}
+            onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
+          >
             {messages.length === 0 ? (
               <Text style={styles.panelEmpty}>No messages yet. Say hello! 👋</Text>
             ) : (
               messages.map((m) => {
-                const mine = m.isMine || m.senderId === myUserId;
+                const mine = m.senderId === myUserId;
                 const isTeacher = m.senderRole === 'teacher';
+                const agg = reactions[m.id];
+                const emojis = agg ? Object.keys(agg.counts).filter((e) => agg.counts[e] > 0) : [];
                 return (
-                  <View key={m.id} style={[styles.msg, mine && styles.msgMine]}>
-                    <Text style={styles.msgWho}>
-                      {m.senderName || 'User'}{isTeacher ? ' · Teacher' : ''}
-                    </Text>
-                    <Text style={styles.msgText}>{m.message}</Text>
+                  <View key={m.id} style={[styles.msgWrap, mine && styles.msgWrapMine]}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onLongPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+                      delayLongPress={250}
+                      style={[styles.msg, mine && styles.msgMine]}
+                    >
+                      <Text style={styles.msgWho}>
+                        {mine ? 'You' : (m.senderName || 'User')}{isTeacher ? ' · Teacher' : ''}
+                      </Text>
+                      <Text style={styles.msgText}>{m.message}</Text>
+                    </TouchableOpacity>
+                    {emojis.length > 0 && (
+                      <View style={styles.badgeRow}>
+                        {emojis.map((e) => (
+                          <TouchableOpacity
+                            key={e}
+                            onPress={() => toggleMsgReaction(m.id, e)}
+                            style={[styles.badge, agg!.mine[e] && styles.badgeMine]}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.badgeText}>{e} {agg!.counts[e]}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                    {pickerFor === m.id && (
+                      <View style={styles.picker}>
+                        {REACTIONS.map((e) => (
+                          <TouchableOpacity key={e} onPress={() => toggleMsgReaction(m.id, e)} style={styles.pickerBtn}>
+                            <Text style={styles.pickerEmoji}>{e}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 );
               })
@@ -589,7 +1062,7 @@ export default function LiveRoomScreen() {
           </ScrollView>
           <View style={styles.chatInputRow}>
             <TextInput
-              style={styles.chatInput}
+              style={[styles.chatInput, chatLocked && styles.chatInputLocked]}
               value={chatText}
               onChangeText={setChatText}
               editable={!chatLocked}
@@ -597,6 +1070,7 @@ export default function LiveRoomScreen() {
               placeholderTextColor={Colors.muted}
               onSubmitEditing={sendChat}
               returnKeyType="send"
+              maxLength={500}
             />
             <TouchableOpacity
               style={[styles.chatSend, chatLocked && styles.dockBtnLocked]}
@@ -609,6 +1083,35 @@ export default function LiveRoomScreen() {
           </View>
         </KeyboardAvoidingView>
       )}
+
+      {/* Terminal overlay: class ended / connection lost / removed */}
+      {overlay && (
+        <View style={styles.overlay}>
+          <View style={styles.overlayCard}>
+            <Text style={styles.overlayIcon}>{overlay.icon}</Text>
+            <Text style={styles.overlayTitle}>{overlay.title}</Text>
+            <Text style={styles.overlayMsg}>{overlay.msg}</Text>
+
+            {state === 'failed' && (
+              <TouchableOpacity style={styles.retryBtn} onPress={connect} activeOpacity={0.8}>
+                <Text style={styles.retryText}>Rejoin</Text>
+              </TouchableOpacity>
+            )}
+            {state === 'removed' && !rejoinSent && (
+              <TouchableOpacity style={styles.retryBtn} onPress={askRejoin} disabled={rejoinBusy} activeOpacity={0.8}>
+                <Text style={styles.retryText}>{rejoinBusy ? 'Sending…' : 'Request to rejoin'}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.retryBtn, state !== 'ended' && styles.secondaryBtn]}
+              onPress={() => router.back()}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.retryText}>{state === 'failed' ? 'Leave' : 'Back to Live Classes'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -619,7 +1122,8 @@ const styles = StyleSheet.create({
   stageEmoji: { fontSize: 48 },
   statusText: { color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center' },
   subText: { color: Colors.muted, fontSize: 14, textAlign: 'center' },
-  retryBtn: { marginTop: 14, backgroundColor: Colors.primary, paddingVertical: 10, paddingHorizontal: 22, borderRadius: 10 },
+  retryBtn: { marginTop: 10, backgroundColor: Colors.primary, paddingVertical: 10, paddingHorizontal: 22, borderRadius: 10, alignItems: 'center' },
+  secondaryBtn: { backgroundColor: 'rgba(255,255,255,0.12)' },
   retryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 
   topBar: {
@@ -629,7 +1133,9 @@ const styles = StyleSheet.create({
   },
   topLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 10 },
   liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: Colors.danger },
-  topTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1 },
+  topTitle: { color: '#fff', fontSize: 14, fontWeight: '700', flexShrink: 1 },
+  recBadge: { backgroundColor: 'rgba(239,68,68,0.2)', paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6 },
+  recText: { color: '#F87171', fontSize: 10, fontWeight: '800' },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   timer: { color: Colors.muted, fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   peopleBtn: { backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
@@ -637,26 +1143,34 @@ const styles = StyleSheet.create({
   leaveBtn: { backgroundColor: Colors.danger, paddingVertical: 6, paddingHorizontal: 14, borderRadius: 8 },
   leaveText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
+  banner: { paddingVertical: 6, paddingHorizontal: 12, alignItems: 'center' },
+  bannerWarn: { backgroundColor: 'rgba(234,179,8,0.9)' },
+  bannerErr: { backgroundColor: 'rgba(239,68,68,0.9)' },
+  bannerText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+
   stage: { flex: 1, position: 'relative' },
   tileGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 6, gap: 6 },
   tile: { width: '48.5%', aspectRatio: 3 / 4, backgroundColor: '#111', borderRadius: 12, overflow: 'hidden' },
   tileWide: { width: '100%', aspectRatio: 16 / 9 },
+  avatarTile: { alignItems: 'center', justifyContent: 'center' },
+  avatarBig: { width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center' },
+  avatarBigTxt: { color: '#fff', fontSize: 28, fontWeight: '700' },
   tileVideo: { flex: 1, width: '100%', height: '100%' },
-  tileLabelWrap: { position: 'absolute', left: 6, bottom: 6, backgroundColor: 'rgba(0,0,0,0.55)', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 6 },
+  tileLabelWrap: { position: 'absolute', left: 6, bottom: 6, maxWidth: '90%', backgroundColor: 'rgba(0,0,0,0.55)', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 6 },
   tileLabelText: { color: '#fff', fontSize: 11, fontWeight: '600' },
 
-  reactionFloatLayer: { position: 'absolute', right: 20, bottom: 10, alignItems: 'center' },
+  reactionFloatLayer: { position: 'absolute', left: 0, right: 0, bottom: 10, alignItems: 'center' },
   reactionFloat: { fontSize: 32 },
   toastLayer: { position: 'absolute', top: 10, alignSelf: 'center', gap: 6 },
   toast: { backgroundColor: 'rgba(0,0,0,0.7)', paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999 },
   toastText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 
   reactionBar: {
-    flexDirection: 'row', justifyContent: 'center', gap: 10,
+    flexDirection: 'row', justifyContent: 'center', gap: 6,
     paddingVertical: 8, backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border,
   },
-  reactionBtn: { padding: 6 },
-  reactionEmoji: { fontSize: 26 },
+  reactionBtn: { padding: 5 },
+  reactionEmoji: { fontSize: 24 },
 
   dock: {
     flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
@@ -670,7 +1184,7 @@ const styles = StyleSheet.create({
 
   // Slide-up panels (people / chat)
   panel: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%',
+    position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%',
     backgroundColor: '#14121f', borderTopLeftRadius: 18, borderTopRightRadius: 18,
     borderTopWidth: 1, borderColor: 'rgba(168,85,247,0.3)',
   },
@@ -681,18 +1195,39 @@ const styles = StyleSheet.create({
   panelEmpty: { color: Colors.muted, fontSize: 13, textAlign: 'center', marginTop: 20 },
 
   personRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  personAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center' },
+  personAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   personAvatarTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
   personName: { color: Colors.text, fontSize: 14, flex: 1 },
-  hostBadge: { backgroundColor: 'rgba(124,58,237,0.2)', paddingVertical: 2, paddingHorizontal: 8, borderRadius: 6 },
-  hostBadgeTxt: { color: '#C4B5FD', fontSize: 11, fontWeight: '700' },
+  personMedia: { color: Colors.muted, fontSize: 13 },
 
-  msg: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '85%', backgroundColor: Colors.card2, borderRadius: 10, padding: 8 },
-  msgMine: { alignSelf: 'flex-end', backgroundColor: 'rgba(124,58,237,0.25)' },
+  msgWrap: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '85%' },
+  msgWrapMine: { alignSelf: 'flex-end' },
+  msg: { backgroundColor: Colors.card2, borderRadius: 10, padding: 8 },
+  msgMine: { backgroundColor: 'rgba(124,58,237,0.25)' },
   msgWho: { color: Colors.muted, fontSize: 11, fontWeight: '600', marginBottom: 2 },
   msgText: { color: Colors.text, fontSize: 14 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  badge: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
+  badgeMine: { backgroundColor: 'rgba(124,58,237,0.35)' },
+  badgeText: { color: Colors.text, fontSize: 12 },
+  picker: { flexDirection: 'row', gap: 4, marginTop: 4, backgroundColor: '#1f1b2e', borderRadius: 14, padding: 4, alignSelf: 'flex-start' },
+  pickerBtn: { padding: 4 },
+  pickerEmoji: { fontSize: 22 },
   chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderTopWidth: 1, borderTopColor: Colors.border },
   chatInput: { flex: 1, backgroundColor: Colors.card2, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, color: Colors.text, fontSize: 14 },
+  chatInputLocked: { opacity: 0.5 },
   chatSend: { backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16 },
   chatSendText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  overlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.78)', alignItems: 'center', justifyContent: 'center', padding: 24,
+  },
+  overlayCard: {
+    width: '100%', maxWidth: 360, backgroundColor: '#14121f', borderRadius: 18, padding: 22,
+    alignItems: 'stretch', gap: 8, borderWidth: 1, borderColor: 'rgba(168,85,247,0.3)',
+  },
+  overlayIcon: { fontSize: 40, textAlign: 'center' },
+  overlayTitle: { color: '#fff', fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  overlayMsg: { color: Colors.muted, fontSize: 14, textAlign: 'center', marginBottom: 6 },
 });

@@ -10,6 +10,7 @@ import type {
 interface ExpoAWSChimeModuleType {
   startMeeting(meetingInfo: MeetingInfo, attendeeInfo: AttendeeInfo): Promise<string>;
   stopMeeting(): Promise<string>;
+  sendDataMessage(topic: string, text: string, lifetimeMs: number): Promise<null>;
   mute(): Promise<string>;
   unmute(): Promise<string>;
   startLocalVideo(): Promise<string>;
@@ -31,6 +32,15 @@ export async function startMeeting(
 
 export async function stopMeeting(): Promise<string> {
   return await ExpoAWSChimeModule.stopMeeting();
+}
+
+/** Broadcast a UTF-8 text data message (<= 2KB) on a Chime topic. Best-effort. */
+export async function sendDataMessage(topic: string, text: string, lifetimeMs = 0): Promise<void> {
+  try {
+    await ExpoAWSChimeModule.sendDataMessage(topic, text, lifetimeMs);
+  } catch {
+    /* best-effort: REST remains the source of truth */
+  }
 }
 
 export async function mute(): Promise<string> {

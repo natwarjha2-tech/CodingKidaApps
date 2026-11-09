@@ -55,6 +55,16 @@ export type ChimeEventMap = {
     isLocal: boolean;
     isScreenShare: boolean;
   };
+  onDataMessage: {
+    topic: string;
+    text: string;
+    senderAttendeeId: string;
+    senderExternalUserId: string;
+    timestampMs: number;
+  };
+  onConnectionState: {
+    state: 'connected' | 'reconnecting' | 'poor' | 'dropped';
+  };
   onError: {
     error: string;
   };

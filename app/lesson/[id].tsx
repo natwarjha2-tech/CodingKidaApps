@@ -16,7 +16,7 @@ import { CoinRewardToast } from '@/components/common/CoinRewardToast';
 import { CodoHelpButton, CodoAnswerCard } from '@/components/lesson/CodoHelp';
 import { CodoPromptModal } from '@/components/lesson/CodoPromptModal';
 import { getWatchlist, setWatchlist } from '@/utils/watchlist.util';
-import { getPlayCache, setPlayCache, type PlayData } from '@/utils/playCache.util';
+import { getPlayCache, setPlayCache, getHlsAuthCache, setHlsAuthCache, type PlayData } from '@/utils/playCache.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
 
 // 'asknow' is the lesson Q&A tab (desktop calls it "AskNow"). Renamed from the
@@ -193,21 +193,29 @@ export default function LessonScreen() {
   // "Sign on play": the course response no longer carries signed video/quality
   // URLs (signed on demand to keep course-open fast). Fetch this lesson's signed
   // playable data when the screen opens, and use it for the player.
-  const [playData, setPlayData] = useState<PlayData | null>(null);
+  // Raw state is tagged with the lesson it belongs to. `playData` is DERIVED:
+  //   • a cached entry for the current lesson is read synchronously during
+  //     render, so a prefetched "Next" lesson has its data in the FIRST frame;
+  //   • otherwise the fetched state is used only if it's for this lesson.
+  // This guarantees the previous lesson's data is never shown for even one
+  // render after navigation (which used to start the old/MP4 source briefly).
+  const [playState, setPlayData_] = useState<{ lessonId: string; data: PlayData } | null>(null);
+  const setPlayData = (data: PlayData | null) =>
+    setPlayData_(data && lessonId ? { lessonId, data } : null);
+  const playData: PlayData | null =
+    (lessonId ? getPlayCache(lessonId) : null)
+    ?? (playState && playState.lessonId === lessonId ? playState.data : null);
+
   useEffect(() => {
     let cancelled = false;
-    if (!lessonId) { setPlayData(null); return; }
+    if (!lessonId) return;
 
     // 45-min cache (shared util so Refresh can clear it): presigned S3 URLs are
     // valid 60 min, so reusing within 45 min is safe (15-min buffer) and lets
     // re-opening the same lesson replay instantly without another signing call.
-    const cached = getPlayCache(lessonId);
-    if (cached) {
-      setPlayData(cached);
-      return;
-    }
+    // (Already used synchronously above — nothing to fetch.)
+    if (getPlayCache(lessonId)) return;
 
-    setPlayData(null);
     coursesApi
       .getLessonPlay(lessonId)
       .then((res) => {
@@ -227,8 +235,12 @@ export default function LessonScreen() {
         // (even as another user, since this cache is device-wide and keyed by
         // lessonId only) would keep showing no qualities. Skip caching in that
         // case so the next open re-fetches and picks up the finished qualities.
+        // An HLS-ready lesson has NO MP4 qualities by design, so it is not
+        // "still processing" — it must be cached (else Next-lesson prefetch
+        // would never work for HLS-only videos).
+        const hlsReady = data.hlsStatus === 'ready' && !!data.hlsMasterUrl;
         const videoStillProcessing =
-          !!data.videoUrl && Object.keys(data.qualityUrls).length === 0;
+          !!data.videoUrl && Object.keys(data.qualityUrls).length === 0 && !hlsReady;
         if (!videoStillProcessing) {
           setPlayCache(lessonId, data);
         }
@@ -255,7 +267,29 @@ export default function LessonScreen() {
     const idx = seq.findIndex((l) => l.id === lessonId);
     const next = idx >= 0 ? seq[idx + 1] : null;
     if (!next) return;
-    if (getPlayCache(next.id)) return; // already warm
+
+    // Warm the next lesson's CloudFront cookies (/hls-auth) — runs only
+    // for HLS-ready lessons and never touches the lesson being watched.
+    const warmAuth = (data: PlayData) => {
+      if (data.hlsStatus !== 'ready' || !data.hlsMasterUrl) return;
+      if (getHlsAuthCache(next.id)) return; // already warm
+      coursesApi
+        .getLessonHlsAuth(next.id)
+        .then((r) => {
+          if (r?.success && r.hlsReady && r.masterUrl && r.cookies) {
+            setHlsAuthCache(next.id, { masterUrl: r.masterUrl, cookies: r.cookies });
+          }
+        })
+        .catch(() => {});
+    };
+
+    const warmedPlay = getPlayCache(next.id);
+    if (warmedPlay) {
+      // Play data already cached — just make sure the cookies are warm too.
+      const t0 = setTimeout(() => warmAuth(warmedPlay), 4000);
+      return () => clearTimeout(t0);
+    }
+
     const t = setTimeout(() => {
       coursesApi
         .getLessonPlay(next.id)
@@ -270,12 +304,14 @@ export default function LessonScreen() {
             hlsMasterUrl: res.lesson.hlsMasterUrl ?? null,
             hlsStatus: res.lesson.hlsStatus ?? 'none',
           };
-          // Don't warm the cache with a still-processing (empty-qualities)
-          // response — same reasoning as the main fetch above.
+          // Don't warm the cache with a still-processing response — same
+          // reasoning as the main fetch above (HLS-ready is NOT processing).
+          const hlsReady = data.hlsStatus === 'ready' && !!data.hlsMasterUrl;
           const videoStillProcessing =
-            !!data.videoUrl && Object.keys(data.qualityUrls).length === 0;
+            !!data.videoUrl && Object.keys(data.qualityUrls).length === 0 && !hlsReady;
           if (!videoStillProcessing) {
             setPlayCache(next.id, data);
+            warmAuth(data);
           }
         })
         .catch(() => {});
@@ -301,25 +337,73 @@ export default function LessonScreen() {
   // forwards source.headers on every manifest + segment request, so one header
   // authorizes the entire adaptive stream. If anything is missing/unready, we
   // leave hlsSource null and the player falls back to the MP4 qualityUrls.
-  const [hlsSource, setHlsSource] = useState<{ url: string; cookieHeader: string } | null>(null);
+  // Tagged with the lesson + master it belongs to, so a stale source from the
+  // previous lesson (or the render before the auth effect runs) is never used.
+  const [hlsSourceState, setHlsSource] = useState<{ url: string; cookieHeader: string; lessonId: string } | null>(null);
+  // True once hls-auth has settled (either with cookies or confirmed no-HLS).
+  // Used to hold the video source until we know whether to play HLS or MP4,
+  // eliminating the wasted MP4 load attempt that happens when HLS auth is still
+  // in flight — without this, the player starts loading the signed MP4 URL,
+  // then immediately remounts to load the HLS master URL (~1s later), which the
+  // user sees as 2-3 load attempts / spinning before the video plays.
+  // Which lesson's auth attempt has finished (success OR failure). Comparing it
+  // to the CURRENT lessonId — instead of a plain boolean — closes the one-render
+  // gap where the play data has arrived but the auth effect hasn't reset the
+  // flag yet: in that render a stale `true` used to hand the player the MP4 URL
+  // (load 1), then the reset showed the spinner (load 2), then HLS (load 3).
+  const [hlsAuthDoneFor, setHlsAuthDoneFor] = useState<string | null>(null);
+  // Does the current lesson's play data expect HLS?
+  const expectsHls = !!playData && playData.hlsStatus === 'ready' && !!playData.hlsMasterUrl;
+
+  // Warm cookies are read SYNCHRONOUSLY during render, so a prefetched next
+  // lesson gets its HLS source in the very first render — no MP4 attempt and no
+  // effect round-trip.
+  const warmAuth = expectsHls ? getHlsAuthCache(lessonId) : null;
+  const warmCookieHeader = warmAuth ? cloudFrontCookieHeader(warmAuth.cookies) : '';
+
+  const hlsSource: { url: string; cookieHeader: string } | null =
+    (hlsSourceState && hlsSourceState.lessonId === lessonId)
+      ? { url: hlsSourceState.url, cookieHeader: hlsSourceState.cookieHeader }
+      : (warmAuth && warmCookieHeader)
+        ? { url: warmAuth.masterUrl, cookieHeader: warmCookieHeader }
+        : null;
+
+  // Player may start only when we KNOW the source for the current lesson:
+  //   • play data present, and
+  //   • no HLS expected (MP4 lesson), or HLS source ready, or the auth attempt
+  //     for THIS lesson has finished (success or failure → MP4 fallback).
+  const hlsAuthResolved = !!playData && (
+    !expectsHls || !!hlsSource || hlsAuthDoneFor === lessonId
+  );
+
   useEffect(() => {
     let cancelled = false;
-    setHlsSource(null);
-    if (!lessonId) return;
-    // Only bother asking for cookies when the server already told us HLS is
-    // ready + CloudFront-backed (hlsMasterUrl present). Otherwise skip the call.
-    if (!playData || playData.hlsStatus !== 'ready' || !playData.hlsMasterUrl) return;
+    if (!lessonId || !playData) return;
+    if (!expectsHls) return;          // MP4 lesson — nothing to fetch
+    if (getHlsAuthCache(lessonId)) {  // warm — already resolved during render
+      setHlsAuthDoneFor(lessonId);
+      return;
+    }
 
     coursesApi
       .getLessonHlsAuth(lessonId)
       .then((res) => {
-        if (cancelled || !res?.success || !res.hlsReady || !res.masterUrl) return;
-        const cookieHeader = cloudFrontCookieHeader(res.cookies);
-        if (!cookieHeader) return; // no cookies → fall back to MP4
-        setHlsSource({ url: res.masterUrl, cookieHeader });
+        if (cancelled) return;
+        if (res?.success && res.hlsReady && res.masterUrl && res.cookies) {
+          const cookieHeader = cloudFrontCookieHeader(res.cookies);
+          if (cookieHeader) {
+            setHlsAuthCache(lessonId, { masterUrl: res.masterUrl, cookies: res.cookies });
+            setHlsSource({ url: res.masterUrl, cookieHeader, lessonId });
+          }
+        }
+        // Settled either way — let the player start (HLS, or MP4 fallback).
+        setHlsAuthDoneFor(lessonId);
       })
-      .catch(() => { /* non-fatal — player falls back to MP4 qualities */ });
+      .catch(() => {
+        if (!cancelled) setHlsAuthDoneFor(lessonId); // non-fatal — MP4 fallback
+      });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lessonId, playData?.hlsStatus, playData?.hlsMasterUrl]);
 
   // ── Next lesson (continuous across modules) — for the "Next Lesson" button ──
@@ -883,7 +967,7 @@ export default function LessonScreen() {
     // not activeLesson.videoUrl (which is empty under sign-on-play). Use the
     // currently-selected quality if the user switched, else the resolved play URL.
     const baseUrl = playVideoUrl || activeLesson?.videoUrl || '';
-    if (!baseUrl) {
+    if (!baseUrl && !hlsSource) {
       Alert.alert('Error', 'No video available to download.');
       return;
     }
@@ -891,6 +975,39 @@ export default function LessonScreen() {
       Alert.alert('Already Downloaded', 'This video is already saved for offline viewing.');
       return;
     }
+
+    // ── HLS lesson: download the segments of the quality being watched ──────
+    // (No MP4 exists for HLS-only videos.) Variants are ranked best→lowest by
+    // bandwidth, so index = position of the chosen quality in the ladder
+    // (720p=0, 480p=1, 360p=2). "Auto" downloads the smallest (360p) to save space.
+    if (hlsSource) {
+      try {
+        const ladder = (playHlsQualities && playHlsQualities.length > 0)
+          ? playHlsQualities
+          : ['720p', '480p', '360p'];
+        const picked = ladder.indexOf(selectedQuality);
+        const qualityIndex = picked >= 0 ? picked : ladder.length - 1;
+        const qualityLabel = picked >= 0 ? selectedQuality : ladder[ladder.length - 1];
+        Alert.alert('Downloading...', `Video download started (${qualityLabel}). Keep the app open until it finishes.`);
+        await DownloadService.downloadHls({
+          lessonId,
+          lessonTitle: activeLesson?.title ?? 'Lesson',
+          moduleTitle: activeModule?.title ?? '',
+          courseId: lessonContext?.courseId ?? '',
+          courseTitle: lessonContext?.courseTitle ?? '',
+          masterUrl: hlsSource.url,
+          cookieHeader: hlsSource.cookieHeader,
+          qualityIndex,
+          qualityLabel,
+        });
+        setVideoDownloaded(true);
+        Alert.alert('Success! ✅', `Video downloaded for offline viewing (${qualityLabel}, 30 days).`);
+      } catch (err: any) {
+        Alert.alert('Download Failed', err?.message || 'Please check your internet and try again.');
+      }
+      return;
+    }
+
     try {
       // Download the quality the user currently selected in the player (mirrors
       // desktop). Falls back to the resolved play URL if no quality was switched.
@@ -1216,9 +1333,15 @@ export default function LessonScreen() {
       {/* Video Player — collapses when keyboard is open for more scroll space */}
       {!keyboardVisible && (
         <VideoPlayer
-          videoUrl={playVideoUrl}
+          // Hold the video source until hls-auth has settled. Without this,
+          // the player loads the signed MP4 URL first, then remounts ~1s later
+          // when hls-auth resolves with the HLS master — the user sees 2-3
+          // loading attempts. Once hlsAuthResolved=true we pass either the HLS
+          // source (via hlsMasterUrl/hlsCookieHeader) or the MP4 URL — one
+          // clean load, never two.
+          videoUrl={hlsAuthResolved ? playVideoUrl : ''}
           title={activeLesson?.title}
-          qualityUrls={playQualityUrls}
+          qualityUrls={hlsAuthResolved ? playQualityUrls : undefined}
           onQualityChange={(q, url) => { setSelectedQuality(q); setSelectedVideoUrl(url); }}
           hlsQualities={playHlsQualities}
           hlsMasterUrl={hlsSource?.url}
@@ -1226,9 +1349,10 @@ export default function LessonScreen() {
           onComplete={handleVideoComplete}
           onViewCounted={handleViewCounted}
           onProgress={handleVideoProgress}
-          // Show a spinner (not "not available") during the brief sign-on-play
-          // URL fetch: loading = play data not resolved yet AND no fallback URL.
-          loading={!playData && !playVideoUrl}
+          // Show spinner while: play data not fetched yet OR hls-auth still in
+          // flight (hlsAuthResolved=false means we're deliberately holding the
+          // source to avoid the wasted MP4 load).
+          loading={!playData || !hlsAuthResolved}
         />
       )}
 

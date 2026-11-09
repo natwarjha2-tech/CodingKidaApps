@@ -9,15 +9,34 @@
  *
  * A 503 from the backend means the feature is disabled → a friendly state.
  */
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { liveApi, type LiveClass } from '@/api/live.api';
+import { hasJoinedLive } from '@/utils/liveJoined';
 import { Colors } from '@/theme';
+
+// "Starts in 2d 5h" / "Starts in 3h 12m" / "Starts in 12m 08s" / "Starting now"
+// (mirrors desktop live.js _liveCountdownText).
+function countdownText(iso: string | null, now: number): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  const diff = Math.floor((t - now) / 1000);
+  if (diff <= 0) return 'Starting now';
+  const d = Math.floor(diff / 86400);
+  const h = Math.floor((diff % 86400) / 3600);
+  const m = Math.floor((diff % 3600) / 60);
+  const s = diff % 60;
+  const pad = (n: number) => (n < 10 ? '0' : '') + n;
+  if (d > 0) return `Starts in ${d}d ${h}h`;
+  if (h > 0) return `Starts in ${h}h ${m}m`;
+  return `Starts in ${m}m ${pad(s)}s`;
+}
 
 // Is the live feature disabled on the backend? The api throws Error(message)
 // via the interceptor; a 503 surfaces as a message we can detect loosely.
@@ -42,10 +61,41 @@ export default function LiveClassesScreen() {
       return res?.success ? res.classes ?? [] : [];
     },
     staleTime: 1000 * 20,
+    refetchInterval: 30000, // pick up "went live" / "ended" without a manual pull
   });
+
+  // Refresh whenever the screen regains focus (e.g. back from the room: the
+  // class may have just ended).
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
 
   const featureOff = !!error && isFeatureOff(error);
   const classes = data ?? [];
+
+  // 1s ticker for the "Starts in…" countdown (only while a scheduled class exists).
+  const [now, setNow] = useState(Date.now());
+  const refreshedAtStart = useRef<Set<string>>(new Set());
+  const hasScheduled = classes.some((c) => c.status === 'scheduled' && c.scheduledAt);
+  useEffect(() => {
+    if (!hasScheduled) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [hasScheduled]);
+
+  // When a countdown reaches zero, refetch once shortly after so the card flips
+  // to "Join Now" as soon as the teacher starts.
+  useEffect(() => {
+    classes.forEach((c) => {
+      if (c.status !== 'scheduled' || !c.scheduledAt) return;
+      if (Date.parse(c.scheduledAt) <= now && !refreshedAtStart.current.has(c.id)) {
+        refreshedAtStart.current.add(c.id);
+        setTimeout(() => { refetch(); }, 1200);
+      }
+    });
+  }, [now, classes, refetch]);
 
   // Open the live room. The room screen handles the actual join + Chime connect.
   const openRoom = useCallback((classId: string) => {
@@ -60,7 +110,9 @@ export default function LiveClassesScreen() {
           <Text style={styles.backBtn}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Live Classes</Text>
-        <View style={{ width: 28 }} />
+        <TouchableOpacity onPress={() => router.push('/live/recordings' as never)} hitSlop={8}>
+          <Text style={styles.recLink}>🎬</Text>
+        </TouchableOpacity>
       </View>
 
       {isLoading ? (
@@ -89,7 +141,9 @@ export default function LiveClassesScreen() {
               <Text style={styles.emptyText}>Scheduled and live classes show up here. Pull to refresh.</Text>
             </View>
           ) : (
-            classes.map((c) => <LiveCard key={c.id} liveClass={c} onJoin={() => openRoom(c.id)} />)
+            classes.map((c) => (
+              <LiveCard key={c.id} liveClass={c} now={now} onJoin={() => openRoom(c.id)} />
+            ))
           )}
         </ScrollView>
       )}
@@ -98,8 +152,10 @@ export default function LiveClassesScreen() {
 }
 
 // ── One class card (student): Join Now when live, else disabled "Scheduled" ──
-function LiveCard({ liveClass: c, onJoin }: { liveClass: LiveClass; onJoin: () => void }) {
+function LiveCard({ liveClass: c, now, onJoin }: { liveClass: LiveClass; now: number; onJoin: () => void }) {
   const isLive = c.status === 'live';
+  const rejoin = isLive && hasJoinedLive(c.id);
+  const countdown = !isLive ? countdownText(c.scheduledAt, now) : null;
   const instructor = c.instructorName || 'Instructor';
   const course = c.courseTitle ? ` · ${c.courseTitle}` : '';
   const dur = c.durationMinutes ? ` · ${c.durationMinutes} min` : '';
@@ -121,11 +177,11 @@ function LiveCard({ liveClass: c, onJoin }: { liveClass: LiveClass; onJoin: () =
       <View style={styles.cardActions}>
         {isLive ? (
           <TouchableOpacity style={[styles.btn, styles.btnDanger]} onPress={onJoin} activeOpacity={0.8}>
-            <Text style={styles.btnDangerText}>Join Now →</Text>
+            <Text style={styles.btnDangerText}>{rejoin ? 'Rejoin →' : 'Join Now →'}</Text>
           </TouchableOpacity>
         ) : (
           <View style={[styles.btn, styles.btnDisabled]}>
-            <Text style={styles.btnDisabledText}>🕒 Scheduled</Text>
+            <Text style={styles.btnDisabledText}>🕒 {countdown || 'Scheduled'}</Text>
           </View>
         )}
       </View>
@@ -141,6 +197,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { color: Colors.primary, fontSize: 20, fontWeight: '600', paddingRight: 8, width: 28 },
+  recLink: { fontSize: 20, width: 28, textAlign: 'right' },
   headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
   content: { padding: 16, gap: 12 },
 

@@ -33,6 +33,31 @@ const TTL_MS = 45 * 60 * 1000; // 45 min (presigned URLs last 60; 15-min buffer)
 
 const _playCache: Record<string, Entry> = {};
 
+// ── HLS auth (CloudFront signed cookies) cache ──────────────────────────────
+// The server issues cookies valid for 4h, so reusing them for 3h is safe. This
+// is what lets "Next lesson" skip the extra /hls-auth round trip: the next
+// lesson's cookies are fetched in the background while the current one plays.
+export type HlsAuthData = {
+  masterUrl: string;
+  cookies: {
+    'CloudFront-Policy': string;
+    'CloudFront-Signature': string;
+    'CloudFront-Key-Pair-Id': string;
+  };
+};
+const HLS_AUTH_TTL_MS = 3 * 60 * 60 * 1000; // 3h (cookies last 4h)
+const _hlsAuthCache: Record<string, { at: number; data: HlsAuthData }> = {};
+
+export function getHlsAuthCache(lessonId: string): HlsAuthData | null {
+  const hit = _hlsAuthCache[lessonId];
+  if (hit && Date.now() - hit.at < HLS_AUTH_TTL_MS) return hit.data;
+  return null;
+}
+
+export function setHlsAuthCache(lessonId: string, data: HlsAuthData): void {
+  _hlsAuthCache[lessonId] = { at: Date.now(), data };
+}
+
 /** Return cached play data for a lesson if present AND still within the TTL. */
 export function getPlayCache(lessonId: string): PlayData | null {
   const hit = _playCache[lessonId];
@@ -53,7 +78,9 @@ export function setPlayCache(lessonId: string, data: PlayData): void {
 export function clearPlayCache(lessonId?: string): void {
   if (lessonId) {
     delete _playCache[lessonId];
+    delete _hlsAuthCache[lessonId];
     return;
   }
   for (const k of Object.keys(_playCache)) delete _playCache[k];
+  for (const k of Object.keys(_hlsAuthCache)) delete _hlsAuthCache[k];
 }

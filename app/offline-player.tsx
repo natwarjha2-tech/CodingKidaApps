@@ -42,7 +42,9 @@ export default function OfflinePlayerScreen() {
 
       <View style={styles.playerContainer}>
         <Video
-          source={{ uri }}
+          // Offline HLS downloads are a local index.m3u8 + segments; tell the
+          // player the type explicitly since a file:// URI has no content-type.
+          source={uri.endsWith('.m3u8') ? { uri, type: 'm3u8' } : { uri }}
           style={styles.video}
           controls
           resizeMode="contain"

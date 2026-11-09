@@ -46,6 +46,30 @@ export interface DownloadItem {
   expiresAt: string; // 30 days from download
   fileSize?: number;
   quality?: string; // selected video quality (e.g. "720p", "480p", "Original")
+  /** 'hls' = fileUri is a local index.m3u8 inside a per-lesson folder of
+   *  segments (offline HLS). Undefined / 'mp4' = single file (legacy / PDF). */
+  format?: 'mp4' | 'hls';
+}
+
+/** Delete a download's files: the whole segment folder for HLS, else the file. */
+async function deleteItemFiles(item: DownloadItem): Promise<void> {
+  try {
+    if (item.format === 'hls') {
+      const dir = item.fileUri.substring(0, item.fileUri.lastIndexOf('/') + 1);
+      const info = await FileSystem.getInfoAsync(dir);
+      if (info.exists) await FileSystem.deleteAsync(dir, { idempotent: true });
+    } else {
+      const info = await FileSystem.getInfoAsync(item.fileUri);
+      if (info.exists) await FileSystem.deleteAsync(item.fileUri, { idempotent: true });
+    }
+  } catch {}
+}
+
+/** Fetch a small text file (playlist) with the CloudFront cookie header. */
+async function fetchText(url: string, cookieHeader: string): Promise<string> {
+  const res = await fetch(url, { headers: cookieHeader ? { Cookie: cookieHeader } : {} });
+  if (!res.ok) throw new Error(`HTTP ${res.status} while fetching playlist`);
+  return res.text();
 }
 
 async function getSignedUrl(url: string): Promise<string> {
@@ -128,6 +152,135 @@ export const DownloadService = {
   },
 
   /**
+   * Download ONE quality of an HLS lesson for offline playback (no MP4 needed).
+   *
+   * Flow: master.m3u8 → pick variant (variants sorted by BANDWIDTH desc, so
+   * qualityIndex 0 = 720p … last = 360p, independent of file order) → variant
+   * playlist → download init + every segment (with the CloudFront cookie) into
+   * downloads/hls_<courseId>_<lessonId>/ → write a local index.m3u8 that
+   * references the segments by file name. ExoPlayer plays that file directly.
+   */
+  downloadHls: async (params: {
+    lessonId: string;
+    lessonTitle: string;
+    moduleTitle: string;
+    courseId: string;
+    courseTitle: string;
+    masterUrl: string;
+    cookieHeader: string;
+    qualityIndex: number; // position in the BANDWIDTH-desc list (0 = best)
+    qualityLabel: string; // e.g. "720p"
+    onProgress?: (done: number, total: number) => void;
+  }): Promise<DownloadItem> => {
+    const {
+      lessonId, lessonTitle, moduleTitle, courseId, courseTitle,
+      masterUrl, cookieHeader, qualityIndex, qualityLabel, onProgress,
+    } = params;
+
+    const baseDir = FileSystem.documentDirectory + 'downloads/';
+    const dirUri = baseDir + `hls_${courseId}_${lessonId}/`;
+
+    try {
+      // Fresh folder (a previous partial/other-quality download is replaced).
+      await FileSystem.deleteAsync(dirUri, { idempotent: true });
+      await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
+
+      // 1. Master → variants with bandwidth, sorted best → lowest.
+      const masterText = await fetchText(masterUrl, cookieHeader);
+      const mLines = masterText.split('\n').map((l) => l.trim()).filter(Boolean);
+      const variants: { url: string; bandwidth: number }[] = [];
+      for (let i = 0; i < mLines.length; i++) {
+        if (mLines[i].startsWith('#EXT-X-STREAM-INF')) {
+          const next = mLines[i + 1];
+          if (next && !next.startsWith('#')) {
+            const bw = mLines[i].match(/BANDWIDTH=(\d+)/);
+            variants.push({ url: next, bandwidth: bw ? parseInt(bw[1], 10) : 0 });
+          }
+        }
+      }
+      if (variants.length === 0) throw new Error('No video variants found.');
+      variants.sort((a, b) => b.bandwidth - a.bandwidth);
+      const chosen = variants[Math.min(Math.max(qualityIndex, 0), variants.length - 1)];
+
+      const masterBase = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
+      const variantAbs = chosen.url.startsWith('http') ? chosen.url : masterBase + chosen.url;
+      const variantBase = variantAbs.substring(0, variantAbs.lastIndexOf('/') + 1);
+      const resolve = (rel: string) => (rel.startsWith('http') ? rel : variantBase + rel);
+
+      // 2. Variant playlist → list of files (init + segments).
+      const variantText = await fetchText(variantAbs, cookieHeader);
+      const vLines = variantText.split('\n').map((l) => l.trim());
+      const files: { remote: string; local: string }[] = [];
+      const localLines: string[] = [];
+      for (const line of vLines) {
+        if (line.startsWith('#EXT-X-MAP:')) {
+          const m = line.match(/URI="([^"]+)"/);
+          if (m) {
+            const name = m[1].split('/').pop() as string;
+            files.push({ remote: resolve(m[1]), local: name });
+            localLines.push(line.replace(m[1], name));
+            continue;
+          }
+        }
+        if (line && !line.startsWith('#')) {
+          const name = line.split('?')[0].split('/').pop() as string;
+          files.push({ remote: resolve(line), local: name });
+          localLines.push(name);
+        } else {
+          localLines.push(line);
+        }
+      }
+      if (files.length === 0) throw new Error('No video segments found.');
+
+      // 3. Download all segments (small parallel batches, with the cookie).
+      let done = 0;
+      let totalBytes = 0;
+      const BATCH = 4;
+      for (let i = 0; i < files.length; i += BATCH) {
+        const batch = files.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (f) => {
+          const dest = dirUri + f.local;
+          const r = await FileSystem.downloadAsync(f.remote, dest, {
+            headers: cookieHeader ? { Cookie: cookieHeader } : {},
+          });
+          if (r.status !== 200) throw new Error(`Segment download failed (${r.status})`);
+          const info = await FileSystem.getInfoAsync(dest);
+          if (info.exists) totalBytes += (info as any).size ?? 0;
+          done += 1;
+          onProgress?.(done, files.length);
+        }));
+      }
+
+      // 4. Local playlist the player opens offline.
+      const fileUri = dirUri + 'index.m3u8';
+      await FileSystem.writeAsStringAsync(fileUri, localLines.join('\n'));
+
+      const now = new Date();
+      const item: DownloadItem = {
+        id: `${lessonId}_video`,
+        lessonId, lessonTitle, moduleTitle, courseId, courseTitle,
+        type: 'video',
+        fileUri,
+        originalUrl: masterUrl,
+        downloadedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        fileSize: totalBytes,
+        quality: qualityLabel,
+        format: 'hls',
+      };
+
+      const existing = await DownloadService.getAll();
+      const filtered = existing.filter((d) => d.id !== item.id);
+      await StorageService.setObject(await downloadsKey(), [...filtered, item]);
+      return item;
+    } catch (err) {
+      // Never leave a half-downloaded folder behind.
+      await FileSystem.deleteAsync(dirUri, { idempotent: true }).catch(() => {});
+      throw err;
+    }
+  },
+
+  /**
    * Get all downloaded items (for the current user)
    */
   getAll: async (): Promise<DownloadItem[]> => {
@@ -162,13 +315,7 @@ export const DownloadService = {
   remove: async (id: string): Promise<void> => {
     const items = await DownloadService.getAll();
     const item = items.find((d) => d.id === id);
-    if (item) {
-      // Delete file
-      try {
-        const info = await FileSystem.getInfoAsync(item.fileUri);
-        if (info.exists) await FileSystem.deleteAsync(item.fileUri);
-      } catch {}
-    }
+    if (item) await deleteItemFiles(item); // whole folder for HLS, file otherwise
     const filtered = items.filter((d) => d.id !== id);
     await StorageService.setObject(await downloadsKey(), filtered);
   },
@@ -265,11 +412,7 @@ export const DownloadService = {
       if (new Date(item.expiresAt) > now) {
         valid.push(item);
       } else {
-        // Delete expired file
-        try {
-          const info = await FileSystem.getInfoAsync(item.fileUri);
-          if (info.exists) await FileSystem.deleteAsync(item.fileUri);
-        } catch {}
+        await deleteItemFiles(item); // expired: remove file / HLS folder
       }
     }
 

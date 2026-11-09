@@ -18,6 +18,7 @@ export {
   unmute,
   startLocalVideo,
   stopLocalVideo,
+  sendDataMessage,
   addListener,
 } from './src/ExpoAWSChimeModule';
 export type {

@@ -97,7 +97,9 @@ export async function registerPushToken(): Promise<void> {
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#7c3aed',
-        sound: 'default',
+        // No `sound` key: on Android it names a CUSTOM bundled sound file, and
+        // 'default' isn't one (expo-notifications logs "Custom sound 'default'
+        // not found"). Omitting it uses the device's default notification sound.
       });
     }
 

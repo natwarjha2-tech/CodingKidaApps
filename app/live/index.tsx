@@ -53,6 +53,7 @@ function formatWhen(iso: string | null): string {
 }
 
 export default function LiveClassesScreen() {
+  const focusedRef = useRef(true);
   // Student-only: just the enrolled/joinable classes (no hosting).
   const { data, isLoading, isRefetching, error, refetch } = useQuery({
     queryKey: ['live-classes'],
@@ -61,14 +62,23 @@ export default function LiveClassesScreen() {
       return res?.success ? res.classes ?? [] : [];
     },
     staleTime: 1000 * 20,
-    refetchInterval: 30000, // pick up "went live" / "ended" without a manual pull
+    // Auto-refresh ONLY while this screen is focused AND a class is scheduled
+    // (waiting for the teacher to go live). No classes / only live classes /
+    // screen in the background => no polling at all.
+    refetchInterval: (query) => {
+      if (!focusedRef.current) return false;
+      const list = (query.state.data as LiveClass[] | undefined) ?? [];
+      return list.some((c) => c.status === 'scheduled') ? 30000 : false;
+    },
   });
 
   // Refresh whenever the screen regains focus (e.g. back from the room: the
-  // class may have just ended).
+  // class may have just ended), and track focus to pause polling when hidden.
   useFocusEffect(
     useCallback(() => {
+      focusedRef.current = true;
       refetch();
+      return () => { focusedRef.current = false; };
     }, [refetch])
   );
 

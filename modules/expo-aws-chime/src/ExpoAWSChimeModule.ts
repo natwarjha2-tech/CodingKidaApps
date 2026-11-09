@@ -1,4 +1,4 @@
-import { EventSubscription, requireNativeModule } from "expo-modules-core";
+import { EventSubscription, requireOptionalNativeModule } from "expo-modules-core";
 
 import type {
   AttendeeInfo,
@@ -21,7 +21,27 @@ interface ExpoAWSChimeModuleType {
   ): EventSubscription;
 }
 
-const ExpoAWSChimeModule = requireNativeModule<ExpoAWSChimeModuleType>("ExpoAWSChime");
+// Optional lookup: if the installed build doesn't contain the native Chime
+// module, importing this file must NOT crash the app (a hard require throws at
+// import time, which kills a release build). Calls then fail with a clear error.
+const NativeChime = requireOptionalNativeModule<ExpoAWSChimeModuleType>("ExpoAWSChime");
+
+const MISSING =
+  "Live class module is not available in this app build. Please install the latest app version.";
+
+const ExpoAWSChimeModule: ExpoAWSChimeModuleType =
+  NativeChime ??
+  (new Proxy({} as ExpoAWSChimeModuleType, {
+    get(_t, prop) {
+      if (prop === "addListener") {
+        // No-op subscription so screens can mount and show the error state.
+        return () => ({ remove() {} });
+      }
+      return () => Promise.reject(new Error(MISSING));
+    },
+  }) as ExpoAWSChimeModuleType);
+
+export const isChimeAvailable = !!NativeChime;
 
 export async function startMeeting(
   meetingInfo: MeetingInfo,

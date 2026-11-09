@@ -20,10 +20,10 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, BackHandler,
-  ScrollView, TextInput, KeyboardAvoidingView, Platform, Image, Linking,
+  ScrollView, TextInput, Platform, Image, Linking, Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PermissionsAndroid } from 'react-native';
 import {
   startMeeting, stopMeeting, mute, unmute, startLocalVideo, stopLocalVideo,
@@ -137,10 +137,29 @@ function seedReactions(m: LiveRoomChatMessage): ReactionAgg[string] | null {
   return { counts, mine };
 }
 
+// Current on-screen keyboard height (0 when hidden). The app is edge-to-edge on
+// Android (and iOS always overlays), so the window is NOT resized when the
+// keyboard opens — we lift the bottom panels by this amount ourselves. Works the
+// same on gesture-nav, 3-button-nav and iPhone devices.
+function useKeyboardHeight(): number {
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s1 = Keyboard.addListener(showEvt, (e) => setH(e.endCoordinates?.height || 0));
+    const s2 = Keyboard.addListener(hideEvt, () => setH(0));
+    return () => { s1.remove(); s2.remove(); };
+  }, []);
+  return h;
+}
+
 export default function LiveRoomScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const classId = String(id || '');
   const myUserId = useAuthStore((s) => s.user?.id) || '';
+
+  const insets = useSafeAreaInsets();
+  const kbHeight = useKeyboardHeight();
 
   const [state, setState] = useState<RoomState>('joining');
   const [joinData, setJoinData] = useState<LiveJoinData | null>(null);
@@ -750,6 +769,24 @@ export default function LiveRoomScreen() {
   const title = joinData?.liveClass?.title || 'Live Class';
   const participantCount = presentIds.length;
 
+  // Bottom-sheet placement that respects the device's safe area + keyboard.
+  // (Absolute children ignore the SafeAreaView padding, so apply insets here.)
+  //  - keyboard closed: sit on the bottom, padded above the system nav bar /
+  //    gesture bar / iPhone home indicator.
+  //  - keyboard open: sit directly above the keyboard and use the space up to
+  //    the status bar, so the input is always visible on any screen size.
+  //  NOTE (Android): RN reports keyboard height EXCLUDING the system navigation
+  //  bar (it subtracts the nav-bar inset), but in edge-to-edge the keyboard sits
+  //  on top of that bar too — so add insets.bottom back, plus a small gap, or the
+  //  input ends up hidden behind the top of the keyboard (Samsung etc.).
+  const KB_GAP = 6;
+  const kbOffset = kbHeight > 0
+    ? kbHeight + (Platform.OS === 'android' ? insets.bottom : 0) + KB_GAP
+    : 0;
+  const panelPos = kbHeight > 0
+    ? { bottom: kbOffset, top: insets.top + 8, height: undefined, paddingBottom: 0 }
+    : { bottom: 0, paddingBottom: Math.max(insets.bottom, 8) };
+
   // Tiles: screen-share first, then remote (teacher first), local last.
   const sortedTiles = useMemo(() => {
     const copy = [...videoTiles];
@@ -960,7 +997,7 @@ export default function LiveRoomScreen() {
 
       {/* People panel */}
       {showPeople && (
-        <View style={styles.panel}>
+        <View style={[styles.panel, panelPos]}>
           <View style={styles.panelHead}>
             <Text style={styles.panelTitle}>Participants ({participantCount})</Text>
             <TouchableOpacity onPress={() => setShowPeople(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
@@ -998,10 +1035,7 @@ export default function LiveRoomScreen() {
 
       {/* Chat panel */}
       {showChat && (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.panel}
-        >
+        <View style={[styles.panel, panelPos]}>
           <View style={styles.panelHead}>
             <Text style={styles.panelTitle}>Chat</Text>
             <TouchableOpacity onPress={() => setShowChat(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
@@ -1081,7 +1115,7 @@ export default function LiveRoomScreen() {
               <Text style={styles.chatSendText}>Send</Text>
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       )}
 
       {/* Terminal overlay: class ended / connection lost / removed */}
@@ -1213,8 +1247,8 @@ const styles = StyleSheet.create({
   picker: { flexDirection: 'row', gap: 4, marginTop: 4, backgroundColor: '#1f1b2e', borderRadius: 14, padding: 4, alignSelf: 'flex-start' },
   pickerBtn: { padding: 4 },
   pickerEmoji: { fontSize: 22 },
-  chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderTopWidth: 1, borderTopColor: Colors.border },
-  chatInput: { flex: 1, backgroundColor: Colors.card2, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, color: Colors.text, fontSize: 14 },
+  chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: '#14121f' },
+  chatInput: { flex: 1, minHeight: 44, backgroundColor: Colors.card2, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: Colors.text, fontSize: 15 },
   chatInputLocked: { opacity: 0.5 },
   chatSend: { backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16 },
   chatSendText: { color: '#fff', fontSize: 14, fontWeight: '700' },

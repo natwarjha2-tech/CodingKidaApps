@@ -26,6 +26,21 @@ export type VideoTileEvent = {
   videoStreamContentWidth?: number;
 };
 
+/** An audio output the call can be routed to. */
+export type AudioDevice = {
+  id: string | null;
+  label: string;
+  type: 'bluetooth' | 'wired' | 'usb' | 'speaker' | 'earpiece' | 'other';
+};
+
+export type AudioDevicesState = {
+  devices: AudioDevice[];
+  activeId: string | null;
+};
+
+/** How the local camera is being sent. */
+export type VideoMode = 'background' | 'plain';
+
 export type ChimeEventMap = {
   onMeetingStart: {
     timestamp: number;
@@ -65,6 +80,7 @@ export type ChimeEventMap = {
   onConnectionState: {
     state: 'connected' | 'reconnecting' | 'poor' | 'dropped';
   };
+  onAudioDevicesChanged: AudioDevicesState;
   onError: {
     error: string;
   };

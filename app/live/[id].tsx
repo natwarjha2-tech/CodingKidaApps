@@ -20,14 +20,22 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, BackHandler,
-  ScrollView, TextInput, Platform, Image, Linking, Keyboard,
+  ScrollView, TextInput, Platform, Image, Linking, AppState,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PermissionsAndroid } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  KeyboardAvoidingView as KCKeyboardAvoidingView,
+  useKeyboardController,
+  useKeyboardState,
+} from 'react-native-keyboard-controller';
 import {
   startMeeting, stopMeeting, mute, unmute, startLocalVideo, stopLocalVideo,
-  sendDataMessage, addListener, ExpoAWSChimeView, type VideoTileEvent,
+  setVideoBackground, listAudioDevices, chooseAudioDevice,
+  sendDataMessage, addListener, ExpoAWSChimeView,
+  type VideoTileEvent, type AudioDevice,
 } from '../../modules/expo-aws-chime';
 import {
   liveApi, type LiveJoinData, type LiveParticipant, type LiveRoomChatMessage,
@@ -66,10 +74,20 @@ type ReactionAgg = Record<string, { counts: Record<string, number>; mine: Record
 async function requestMediaPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
-    const res = await PermissionsAndroid.requestMultiple([
+    const perms = [
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
       PermissionsAndroid.PERMISSIONS.CAMERA,
-    ]);
+    ];
+    // Android 12+: needed to route class audio to a Bluetooth headset (optional).
+    if (Number(Platform.Version) >= 31 && PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT) {
+      perms.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+    }
+    // Android 13+: lets the "Live class in progress" notification show while the
+    // app is in the background (optional — the class keeps running either way).
+    if (Number(Platform.Version) >= 33 && PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
+      perms.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+    }
+    const res = await PermissionsAndroid.requestMultiple(perms);
     return res[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
   } catch {
     return false;
@@ -137,20 +155,38 @@ function seedReactions(m: LiveRoomChatMessage): ReactionAgg[string] | null {
   return { counts, mine };
 }
 
-// Current on-screen keyboard height (0 when hidden). The app is edge-to-edge on
-// Android (and iOS always overlays), so the window is NOT resized when the
-// keyboard opens — we lift the bottom panels by this amount ourselves. Works the
-// same on gesture-nav, 3-button-nav and iPhone devices.
-function useKeyboardHeight(): number {
-  const [h, setH] = useState(0);
-  useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const s1 = Keyboard.addListener(showEvt, (e) => setH(e.endCoordinates?.height || 0));
-    const s2 = Keyboard.addListener(hideEvt, () => setH(0));
-    return () => { s1.remove(); s2.remove(); };
-  }, []);
-  return h;
+// Virtual backgrounds (same 7 images as the desktop app). Thumbnails live in
+// app assets; the full images are bundled natively in the Chime module.
+const BACKGROUNDS: { sel: string; thumb: number | null; label: string }[] = [
+  { sel: '', thumb: null, label: 'None' },
+  { sel: '1', thumb: require('../../assets/live-bg/bg-1.jpg'), label: '1' },
+  { sel: '2', thumb: require('../../assets/live-bg/bg-2.jpg'), label: '2' },
+  { sel: '3', thumb: require('../../assets/live-bg/bg-3.jpg'), label: '3' },
+  { sel: '4', thumb: require('../../assets/live-bg/bg-4.jpg'), label: '4' },
+  { sel: '5', thumb: require('../../assets/live-bg/bg-5.jpg'), label: '5' },
+  { sel: '6', thumb: require('../../assets/live-bg/bg-6.jpg'), label: '6' },
+  { sel: '7', thumb: require('../../assets/live-bg/bg-7.jpg'), label: '7' },
+];
+const BG_PREF_KEY = 'ck_live_bg'; // same key name as desktop
+
+function audioDeviceIcon(t: AudioDevice['type']): string {
+  switch (t) {
+    case 'bluetooth': return '🎧';
+    case 'wired': case 'usb': return '🎧';
+    case 'speaker': return '🔊';
+    case 'earpiece': return '📱';
+    default: return '🔈';
+  }
+}
+function audioDeviceName(d: AudioDevice): string {
+  switch (d.type) {
+    case 'bluetooth': return `Bluetooth${d.label ? ` (${d.label})` : ''}`;
+    case 'wired': return 'Wired headset';
+    case 'usb': return 'USB headset';
+    case 'speaker': return 'Speaker';
+    case 'earpiece': return 'Phone (earpiece)';
+    default: return d.label || 'Audio device';
+  }
 }
 
 export default function LiveRoomScreen() {
@@ -159,7 +195,15 @@ export default function LiveRoomScreen() {
   const myUserId = useAuthStore((s) => s.user?.id) || '';
 
   const insets = useSafeAreaInsets();
-  const kbHeight = useKeyboardHeight();
+
+  // Enable precise keyboard tracking only while the live room is open (the rest
+  // of the app keeps its existing keyboard behaviour).
+  const { setEnabled: setKeyboardControllerEnabled } = useKeyboardController();
+  useEffect(() => {
+    setKeyboardControllerEnabled(true);
+    return () => setKeyboardControllerEnabled(false);
+  }, [setKeyboardControllerEnabled]);
+  const kbOpen = useKeyboardState((s) => s.isVisible);
 
   const [state, setState] = useState<RoomState>('joining');
   const [joinData, setJoinData] = useState<LiveJoinData | null>(null);
@@ -175,6 +219,17 @@ export default function LiveRoomScreen() {
   const [videoTiles, setVideoTiles] = useState<VideoTileEvent[]>([]);
   const [attMap, setAttMap] = useState<Record<string, string>>({}); // attendeeId -> externalUserId
   const [mutedUsers, setMutedUsers] = useState<Record<string, boolean>>({});
+
+  // Audio output (speaker / headset / Bluetooth) + virtual background.
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [activeAudioId, setActiveAudioId] = useState<string | null>(null);
+  const [showAudio, setShowAudio] = useState(false);
+  const [bgSel, setBgSel] = useState('');
+  const [showBg, setShowBg] = useState(false);
+  const [bgBusy, setBgBusy] = useState(false);
+  // Camera was on when the app went to the background (Android blocks camera
+  // capture for background apps) → turn it back on when the student returns.
+  const camWasOnRef = useRef(false);
 
   // Host-moderation (enforced on THIS student).
   const [micLocked, setMicLocked] = useState(false);
@@ -360,6 +415,7 @@ export default function LiveRoomScreen() {
     chatSeenRef.current = new Set();
     chatCursorRef.current = undefined;
     micLockedRef.current = false; camLockedRef.current = false; chatLockedRef.current = false;
+    camWasOnRef.current = false;
     camOnRef.current = false;
     setAttMap({}); setVideoTiles([]); setMessages([]); setReactions({}); setMutedUsers({});
     setMicMuted(true); setCamOn(false);
@@ -398,7 +454,7 @@ export default function LiveRoomScreen() {
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await startMeeting(data.meeting as any, data.attendee as any);
+        await startMeeting(data.meeting as any, data.attendee as any, data.liveClass?.title || 'Live class');
       } catch (e) {
         if (stale()) return;
         liveApi.leave(classId).catch(() => {});
@@ -541,6 +597,11 @@ export default function LiveRoomScreen() {
             break;
           }
         }
+      }),
+      // Headset / Bluetooth plugged in or removed (native auto-routes; we mirror it).
+      addListener('onAudioDevicesChanged', (s) => {
+        setAudioDevices(s.devices || []);
+        setActiveAudioId(s.activeId ?? null);
       }),
       addListener('onError', (e) => {
         if (leavingRef.current || stateRef.current === 'left') return;
@@ -732,12 +793,100 @@ export default function LiveRoomScreen() {
         ]);
         return;
       }
-      await startLocalVideo();
+      const mode = await startLocalVideo();
       setCamOn(true);
+      if (bgSel && mode === 'plain') {
+        addToast('Background not supported on this device — using normal camera');
+      }
     } catch {
       Alert.alert('Camera error', 'Could not toggle the camera.');
     }
-  }, [camLocked, camOn]);
+  }, [camLocked, camOn, bgSel, addToast]);
+
+  // ── Bottom panels: only one open at a time ────────────────────────────────
+  const openPanel = useCallback((p: 'chat' | 'people' | 'audio' | 'bg' | null) => {
+    setShowChat(p === 'chat');
+    setShowPeople(p === 'people');
+    setShowAudio(p === 'audio');
+    setShowBg(p === 'bg');
+  }, []);
+
+  // ── Audio output (speaker / headset / Bluetooth) ──────────────────────────
+  const refreshAudioDevices = useCallback(async () => {
+    const s = await listAudioDevices();
+    setAudioDevices(s.devices || []);
+    setActiveAudioId(s.activeId ?? null);
+  }, []);
+
+  const pickAudioDevice = useCallback(async (d: AudioDevice) => {
+    if (!d.id) return;
+    setActiveAudioId(d.id); // optimistic
+    await chooseAudioDevice(d.id);
+    setShowAudio(false);
+  }, []);
+
+  const activeAudio = useMemo(
+    () => audioDevices.find((d) => d.id != null && d.id === activeAudioId) || null,
+    [audioDevices, activeAudioId]
+  );
+
+  // ── Virtual background ────────────────────────────────────────────────────
+  // Restore the saved choice (same preference as desktop) once per room.
+  useEffect(() => {
+    AsyncStorage.getItem(BG_PREF_KEY)
+      .then((v) => {
+        const sel = v && BACKGROUNDS.some((b) => b.sel === v) ? v : '';
+        setBgSel(sel);
+        setVideoBackground(sel).catch(() => {});
+      })
+      .catch(() => {});
+  }, []);
+
+  const pickBackground = useCallback(async (sel: string) => {
+    if (bgBusy) return;
+    setBgBusy(true);
+    setBgSel(sel);
+    AsyncStorage.setItem(BG_PREF_KEY, sel).catch(() => {});
+    try {
+      const mode = await setVideoBackground(sel);
+      if (sel && mode === 'plain') {
+        addToast('Background not supported on this device — using normal camera');
+      }
+    } catch {
+      addToast('Could not apply the background');
+    } finally {
+      setBgBusy(false);
+    }
+  }, [bgBusy, addToast]);
+
+  // ── App to background / foreground ────────────────────────────────────────
+  // The class keeps running in the background (native foreground service keeps
+  // audio + connection alive). Android does not allow camera capture from the
+  // background, so pause the camera and turn it back on when the student returns.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (stateRef.current !== 'connected') return;
+      if (next === 'background') {
+        if (camOnRef.current) {
+          camWasOnRef.current = true;
+          stopLocalVideo().catch(() => {});
+          camOnRef.current = false;
+          setCamOn(false);
+        }
+      } else if (next === 'active') {
+        if (camWasOnRef.current) {
+          camWasOnRef.current = false;
+          if (!camLockedRef.current) {
+            startLocalVideo()
+              .then(() => { camOnRef.current = true; setCamOn(true); })
+              .catch(() => {});
+          }
+        }
+        refreshAudioDevices();
+      }
+    });
+    return () => sub.remove();
+  }, [refreshAudioDevices]);
 
   const askRejoin = useCallback(async () => {
     if (rejoinBusy || rejoinSent) return;
@@ -775,17 +924,18 @@ export default function LiveRoomScreen() {
   //    gesture bar / iPhone home indicator.
   //  - keyboard open: sit directly above the keyboard and use the space up to
   //    the status bar, so the input is always visible on any screen size.
-  //  NOTE (Android): RN reports keyboard height EXCLUDING the system navigation
-  //  bar (it subtracts the nav-bar inset), but in edge-to-edge the keyboard sits
-  //  on top of that bar too — so add insets.bottom back, plus a small gap, or the
-  //  input ends up hidden behind the top of the keyboard (Samsung etc.).
-  const KB_GAP = 6;
-  const kbOffset = kbHeight > 0
-    ? kbHeight + (Platform.OS === 'android' ? insets.bottom : 0) + KB_GAP
-    : 0;
-  const panelPos = kbHeight > 0
-    ? { bottom: kbOffset, top: insets.top + 8, height: undefined, paddingBottom: 0 }
-    : { bottom: 0, paddingBottom: Math.max(insets.bottom, 8) };
+  //  The exact keyboard overlap is handled by react-native-keyboard-controller's
+  //  KeyboardAvoidingView (measured per frame from the real keyboard position, so
+  //  Samsung's nav bar / suggestion strip / floating keyboards are all covered).
+  //  Here we only decide the panel's size: when the keyboard is open the panel
+  //  spans from under the status bar to the screen bottom, and the avoiding view
+  //  pads its bottom by exactly the keyboard's height.
+  const panelPos = kbOpen
+    ? { top: insets.top + 8, bottom: 0, height: undefined }
+    : { bottom: 0 };
+  // Inner bottom padding for the nav bar / home indicator (keyboard closed only —
+  // when it is open the keyboard already covers that area).
+  const panelInnerPad = { paddingBottom: kbOpen ? 6 : Math.max(insets.bottom, 8) };
 
   // Tiles: screen-share first, then remote (teacher first), local last.
   const sortedTiles = useMemo(() => {
@@ -888,7 +1038,7 @@ export default function LiveRoomScreen() {
         </View>
         <View style={styles.topRight}>
           <Text style={styles.timer}>{elapsed}</Text>
-          <TouchableOpacity style={styles.peopleBtn} onPress={() => { setShowPeople((v) => !v); setShowChat(false); }} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.peopleBtn} onPress={() => openPanel(showPeople ? null : 'people')} activeOpacity={0.8}>
             <Text style={styles.peopleText}>👥 {participantCount}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.leaveBtn} onPress={leave} activeOpacity={0.8}>
@@ -987,17 +1137,36 @@ export default function LiveRoomScreen() {
 
         <TouchableOpacity
           style={styles.dockBtn}
-          onPress={() => { setShowChat((v) => !v); setShowPeople(false); }}
+          onPress={() => openPanel(showChat ? null : 'chat')}
           activeOpacity={0.8}
         >
           <Text style={styles.dockIcon}>💬</Text>
           <Text style={styles.dockLabel}>Chat</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.dockBtn}
+          onPress={() => { openPanel(showAudio ? null : 'audio'); refreshAudioDevices(); }}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.dockIcon}>{audioDeviceIcon(activeAudio?.type || 'speaker')}</Text>
+          <Text style={styles.dockLabel}>Audio</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.dockBtn, !!bgSel && styles.dockBtnOn]}
+          onPress={() => openPanel(showBg ? null : 'bg')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.dockIcon}>🖼</Text>
+          <Text style={styles.dockLabel}>Background</Text>
+        </TouchableOpacity>
       </View>
 
       {/* People panel */}
       {showPeople && (
-        <View style={[styles.panel, panelPos]}>
+        <View style={[styles.panel, { bottom: 0 }]}>
+          <View style={[styles.panelInner, panelInnerPad]}>
           <View style={styles.panelHead}>
             <Text style={styles.panelTitle}>Participants ({participantCount})</Text>
             <TouchableOpacity onPress={() => setShowPeople(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
@@ -1030,12 +1199,85 @@ export default function LiveRoomScreen() {
               })}
             {presentIds.length === 0 && <Text style={styles.panelEmpty}>No one here yet.</Text>}
           </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Audio output panel (speaker / headset / Bluetooth) */}
+      {showAudio && (
+        <View style={[styles.panel, styles.panelShort, { bottom: 0 }]}>
+          <View style={[styles.panelInner, panelInnerPad]}>
+            <View style={styles.panelHead}>
+              <Text style={styles.panelTitle}>Audio output</Text>
+              <TouchableOpacity onPress={() => setShowAudio(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
+            </View>
+            <ScrollView style={styles.panelBody}>
+              {audioDevices.length === 0 ? (
+                <Text style={styles.panelEmpty}>No audio devices found.</Text>
+              ) : (
+                audioDevices.map((d) => {
+                  const active = d.id != null && d.id === activeAudioId;
+                  return (
+                    <TouchableOpacity
+                      key={`${d.type}-${d.id}`}
+                      style={[styles.optionRow, active && styles.optionRowActive]}
+                      onPress={() => pickAudioDevice(d)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.optionIcon}>{audioDeviceIcon(d.type)}</Text>
+                      <Text style={styles.optionText} numberOfLines={1}>{audioDeviceName(d)}</Text>
+                      {active && <Text style={styles.optionCheck}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+              <Text style={styles.optionHint}>
+                Headsets and Bluetooth are picked automatically when connected.
+              </Text>
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Virtual background picker (same backgrounds as desktop) */}
+      {showBg && (
+        <View style={[styles.panel, styles.panelShort, { bottom: 0 }]}>
+          <View style={[styles.panelInner, panelInnerPad]}>
+            <View style={styles.panelHead}>
+              <Text style={styles.panelTitle}>Background</Text>
+              <TouchableOpacity onPress={() => setShowBg(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.bgGrid}>
+              {BACKGROUNDS.map((b) => {
+                const active = b.sel === bgSel;
+                return (
+                  <TouchableOpacity
+                    key={b.sel || 'none'}
+                    style={[styles.bgCell, active && styles.bgCellActive]}
+                    onPress={() => pickBackground(b.sel)}
+                    disabled={bgBusy}
+                    activeOpacity={0.8}
+                  >
+                    {b.thumb ? (
+                      <Image source={b.thumb} style={styles.bgThumb} />
+                    ) : (
+                      <View style={[styles.bgThumb, styles.bgNone]}><Text style={styles.bgNoneText}>🚫 None</Text></View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <Text style={styles.optionHint}>
+              {bgBusy ? 'Applying…' : camOn ? 'Applied to your camera for everyone.' : 'Applied when you turn your camera on.'}
+            </Text>
+          </View>
         </View>
       )}
 
       {/* Chat panel */}
       {showChat && (
-        <View style={[styles.panel, panelPos]}>
+        <KCKeyboardAvoidingView behavior="padding" style={[styles.panel, panelPos]}>
+          <View style={[styles.panelInner, panelInnerPad]}>
           <View style={styles.panelHead}>
             <Text style={styles.panelTitle}>Chat</Text>
             <TouchableOpacity onPress={() => setShowChat(false)}><Text style={styles.panelClose}>✕</Text></TouchableOpacity>
@@ -1055,17 +1297,31 @@ export default function LiveRoomScreen() {
                 const emojis = agg ? Object.keys(agg.counts).filter((e) => agg.counts[e] > 0) : [];
                 return (
                   <View key={m.id} style={[styles.msgWrap, mine && styles.msgWrapMine]}>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onLongPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
-                      delayLongPress={250}
-                      style={[styles.msg, mine && styles.msgMine]}
-                    >
-                      <Text style={styles.msgWho}>
-                        {mine ? 'You' : (m.senderName || 'User')}{isTeacher ? ' · Teacher' : ''}
-                      </Text>
-                      <Text style={styles.msgText}>{m.message}</Text>
-                    </TouchableOpacity>
+                    <View style={[styles.msgRow, mine && styles.msgRowMine]}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        // Tap (or long-press) a message to react — WhatsApp-style.
+                        onPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+                        onLongPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+                        delayLongPress={250}
+                        style={[styles.msg, mine && styles.msgMine]}
+                      >
+                        <Text style={styles.msgWho}>
+                          {mine ? 'You' : (m.senderName || 'User')}{isTeacher ? ' · Teacher' : ''}
+                        </Text>
+                        <Text style={styles.msgText}>{m.message}</Text>
+                      </TouchableOpacity>
+                      {/* Visible react button (same as desktop's react icon) */}
+                      <TouchableOpacity
+                        onPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+                        style={[styles.reactBtn, pickerFor === m.id && styles.reactBtnActive]}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="React to message"
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.reactBtnText}>😊</Text>
+                      </TouchableOpacity>
+                    </View>
                     {emojis.length > 0 && (
                       <View style={styles.badgeRow}>
                         {emojis.map((e) => (
@@ -1115,7 +1371,8 @@ export default function LiveRoomScreen() {
               <Text style={styles.chatSendText}>Send</Text>
             </TouchableOpacity>
           </View>
-        </View>
+          </View>
+        </KCKeyboardAvoidingView>
       )}
 
       {/* Terminal overlay: class ended / connection lost / removed */}
@@ -1210,18 +1467,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
     paddingVertical: 10, backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border,
   },
-  dockBtn: { alignItems: 'center', gap: 3, paddingVertical: 6, paddingHorizontal: 18, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' },
+  // 5 buttons: equal width so they fit on narrow phones too.
+  dockBtn: { flex: 1, marginHorizontal: 3, alignItems: 'center', gap: 3, paddingVertical: 6, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' },
   dockBtnOff: { backgroundColor: 'rgba(239,68,68,0.15)' },
+  dockBtnOn: { backgroundColor: 'rgba(124,58,237,0.25)' },
   dockBtnLocked: { opacity: 0.5 },
   dockIcon: { fontSize: 20 },
-  dockLabel: { color: Colors.text, fontSize: 11, fontWeight: '600' },
+  dockLabel: { color: Colors.text, fontSize: 10, fontWeight: '600' },
 
-  // Slide-up panels (people / chat)
+  // Slide-up panels (people / chat / audio / background)
   panel: {
     position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%',
     backgroundColor: '#14121f', borderTopLeftRadius: 18, borderTopRightRadius: 18,
     borderTopWidth: 1, borderColor: 'rgba(168,85,247,0.3)',
+    overflow: 'hidden',
   },
+  panelShort: { height: '46%' },
+  panelInner: { flexShrink: 1, flexGrow: 1 },
+
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.04)' },
+  optionRowActive: { backgroundColor: 'rgba(124,58,237,0.25)' },
+  optionIcon: { fontSize: 20 },
+  optionText: { color: Colors.text, fontSize: 15, flex: 1 },
+  optionCheck: { color: '#C4B5FD', fontSize: 16, fontWeight: '800' },
+  optionHint: { color: Colors.muted, fontSize: 12, textAlign: 'center', paddingHorizontal: 12, paddingVertical: 8 },
+
+  bgGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 10, gap: 10, justifyContent: 'center' },
+  bgCell: { width: '30%', aspectRatio: 16 / 9, borderRadius: 10, overflow: 'hidden', borderWidth: 2, borderColor: 'transparent' },
+  bgCellActive: { borderColor: '#A78BFA' },
+  bgThumb: { width: '100%', height: '100%' },
+  bgNone: { backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center' },
+  bgNoneText: { color: Colors.text, fontSize: 12, fontWeight: '600' },
   panelHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
   panelTitle: { color: '#fff', fontSize: 15, fontWeight: '700' },
   panelClose: { color: Colors.muted, fontSize: 18, fontWeight: '700' },
@@ -1234,9 +1510,18 @@ const styles = StyleSheet.create({
   personName: { color: Colors.text, fontSize: 14, flex: 1 },
   personMedia: { color: Colors.muted, fontSize: 13 },
 
-  msgWrap: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '85%' },
-  msgWrapMine: { alignSelf: 'flex-end' },
-  msg: { backgroundColor: Colors.card2, borderRadius: 10, padding: 8 },
+  msgWrap: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '90%' },
+  msgWrapMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+  msgRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Own messages: react button on the left of the bubble.
+  msgRowMine: { flexDirection: 'row-reverse' },
+  reactBtn: {
+    width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  reactBtnActive: { backgroundColor: 'rgba(124,58,237,0.35)' },
+  reactBtnText: { fontSize: 15 },
+  msg: { backgroundColor: Colors.card2, borderRadius: 10, padding: 8, flexShrink: 1 },
   msgMine: { backgroundColor: 'rgba(124,58,237,0.25)' },
   msgWho: { color: Colors.muted, fontSize: 11, fontWeight: '600', marginBottom: 2 },
   msgText: { color: Colors.text, fontSize: 14 },

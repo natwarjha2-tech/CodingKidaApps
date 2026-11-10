@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Notifications from 'expo-notifications';
 import { useAuthStore } from '@/store';
@@ -225,6 +226,10 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
+        {/* Keyboard handling is OFF app-wide (existing screens keep their current
+            behaviour). The live-room screen turns it on while mounted so its chat
+            input always sits exactly above the keyboard on every Android device. */}
+        <KeyboardProvider enabled={false}>
         <QueryClientProvider client={queryClient}>
           <AuthInitializer />
           <StatusBar style="light" backgroundColor={Colors.bg} />
@@ -258,6 +263,7 @@ export default function RootLayout() {
             <Stack.Screen name="live/[id]" options={{ animation: 'slide_from_bottom' }} />
           </Stack>
         </QueryClientProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

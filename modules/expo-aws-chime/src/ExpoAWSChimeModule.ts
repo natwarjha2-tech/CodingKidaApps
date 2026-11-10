@@ -2,19 +2,24 @@ import { EventSubscription, requireOptionalNativeModule } from "expo-modules-cor
 
 import type {
   AttendeeInfo,
+  AudioDevicesState,
   ChimeEventCallback,
   ChimeEventName,
   MeetingInfo,
+  VideoMode,
 } from "./ExpoAWSChime.types";
 
 interface ExpoAWSChimeModuleType {
-  startMeeting(meetingInfo: MeetingInfo, attendeeInfo: AttendeeInfo): Promise<string>;
+  startMeeting(meetingInfo: MeetingInfo, attendeeInfo: AttendeeInfo, title: string | null): Promise<string>;
   stopMeeting(): Promise<string>;
   sendDataMessage(topic: string, text: string, lifetimeMs: number): Promise<null>;
   mute(): Promise<string>;
   unmute(): Promise<string>;
-  startLocalVideo(): Promise<string>;
+  startLocalVideo(): Promise<VideoMode>;
   stopLocalVideo(): Promise<string>;
+  setVideoBackground(sel: string): Promise<VideoMode | "off">;
+  listAudioDevices(): Promise<AudioDevicesState>;
+  chooseAudioDevice(id: string): Promise<null>;
   addListener<K extends ChimeEventName>(
     event: K,
     callback: ChimeEventCallback<K>,
@@ -43,11 +48,16 @@ const ExpoAWSChimeModule: ExpoAWSChimeModuleType =
 
 export const isChimeAvailable = !!NativeChime;
 
+/**
+ * Join the Chime meeting. `title` is shown in the ongoing "Live class in
+ * progress" notification that keeps the class running in the background.
+ */
 export async function startMeeting(
   meetingInfo: MeetingInfo,
   attendeeInfo: AttendeeInfo,
+  title?: string,
 ): Promise<string> {
-  return await ExpoAWSChimeModule.startMeeting(meetingInfo, attendeeInfo);
+  return await ExpoAWSChimeModule.startMeeting(meetingInfo, attendeeInfo, title ?? null);
 }
 
 export async function stopMeeting(): Promise<string> {
@@ -71,8 +81,35 @@ export async function unmute(): Promise<string> {
   return await ExpoAWSChimeModule.unmute();
 }
 
-export async function startLocalVideo(): Promise<string> {
+/** Turn the camera on. Resolves "background" when the virtual background is applied. */
+export async function startLocalVideo(): Promise<VideoMode> {
   return await ExpoAWSChimeModule.startLocalVideo();
+}
+
+/**
+ * Choose the virtual background: "" = none, "1".."7" = bundled backgrounds
+ * (same set as the desktop app). Applied live if the camera is on.
+ */
+export async function setVideoBackground(sel: string): Promise<VideoMode | "off"> {
+  return await ExpoAWSChimeModule.setVideoBackground(sel);
+}
+
+/** Available audio outputs (speaker / earpiece / wired / Bluetooth) + the active one. */
+export async function listAudioDevices(): Promise<AudioDevicesState> {
+  try {
+    return await ExpoAWSChimeModule.listAudioDevices();
+  } catch {
+    return { devices: [], activeId: null };
+  }
+}
+
+/** Route audio to a device by id; "" = automatic (headset/Bluetooth first, else speaker). */
+export async function chooseAudioDevice(id: string): Promise<void> {
+  try {
+    await ExpoAWSChimeModule.chooseAudioDevice(id);
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function stopLocalVideo(): Promise<string> {

@@ -1,15 +1,23 @@
 package expo.modules.awschime
 
-import android.content.Context
-import android.content.pm.PackageManager
-import android.media.AudioManager
-import com.amazonaws.services.chime.sdk.meetings.audiovideo.AudioVideoFacade
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.AttendeeInfo
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.AudioVideoObserver
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.SignalUpdate
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.VolumeUpdate
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.RemoteVideoSource
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.VideoTileObserver
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.VideoTileState
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.backgroundfilter.backgroundreplacement.BackgroundReplacementConfiguration
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.backgroundfilter.backgroundreplacement.BackgroundReplacementVideoFrameProcessor
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.DefaultCameraCaptureSource
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.capture.DefaultSurfaceTextureCaptureSourceFactory
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.gl.DefaultEglCoreFactory
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.gl.EglCoreFactory
+import com.amazonaws.services.chime.sdk.meetings.device.DeviceChangeObserver
+import com.amazonaws.services.chime.sdk.meetings.device.MediaDevice
+import com.amazonaws.services.chime.sdk.meetings.device.MediaDeviceType
 import com.amazonaws.services.chime.sdk.meetings.realtime.RealtimeObserver
 import com.amazonaws.services.chime.sdk.meetings.realtime.datamessage.DataMessage
 import com.amazonaws.services.chime.sdk.meetings.realtime.datamessage.DataMessageObserver
@@ -21,7 +29,6 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import com.amazonaws.services.chime.sdk.meetings.audiovideo.AttendeeInfo
 
 class ExpoAWSChimeModule : Module() {
   private val logger = ConsoleLogger(LogLevel.INFO)
@@ -32,6 +39,22 @@ class ExpoAWSChimeModule : Module() {
   @Volatile private var sessionStopped = false
   private val scope = CoroutineScope(Dispatchers.Main)
 
+  // Shared EGL factory: the meeting session AND the custom camera/background
+  // pipeline must use the same one (Chime requirement for custom video sources).
+  private var eglCoreFactory: EglCoreFactory = DefaultEglCoreFactory()
+
+  // ── Audio routing ──
+  // Id of the audio device the student picked manually (null = automatic: prefer
+  // Bluetooth > wired/USB headset > speaker > earpiece, re-evaluated on plug/unplug).
+  private var userAudioDeviceId: String? = null
+  private var deviceObserver: DeviceChangeObserver? = null
+
+  // ── Local video + virtual background ──
+  private var localVideoOn = false
+  private var videoBackground: String = ""          // "" = none, "1".."7" = assets/live-bg/bg-N.jpg
+  private var cameraSource: DefaultCameraCaptureSource? = null
+  private var bgProcessor: BackgroundReplacementVideoFrameProcessor? = null
+
   companion object {
     private const val TAG = "ExpoAWSChimeModule"
     // Must match the desktop app's Chime data-message topics.
@@ -41,10 +64,118 @@ class ExpoAWSChimeModule : Module() {
   }
 
   private val reactContext
-  get() = requireNotNull(appContext.reactContext)
+    get() = requireNotNull(appContext.reactContext)
 
-  private fun defaultUrlRewriter(url: String): String {
-    return url
+  private fun defaultUrlRewriter(url: String): String = url
+
+  // ── Audio device helpers ────────────────────────────────────────────────────
+
+  private fun deviceToMap(d: MediaDevice): Map<String, Any?> = mapOf(
+    "id" to d.id,
+    "label" to d.label,
+    "type" to when (d.type) {
+      MediaDeviceType.AUDIO_BLUETOOTH -> "bluetooth"
+      MediaDeviceType.AUDIO_WIRED_HEADSET -> "wired"
+      MediaDeviceType.AUDIO_USB_HEADSET -> "usb"
+      MediaDeviceType.AUDIO_BUILTIN_SPEAKER -> "speaker"
+      MediaDeviceType.AUDIO_HANDSET -> "earpiece"
+      else -> "other"
+    }
+  )
+
+  private fun audioDevices(): List<MediaDevice> =
+    try { meetingSession?.audioVideo?.listAudioDevices() ?: emptyList() } catch (e: Exception) { emptyList() }
+
+  private fun activeAudioDevice(): MediaDevice? =
+    try { meetingSession?.audioVideo?.getActiveAudioDevice() } catch (e: Exception) { null }
+
+  // Pick the best available output. If the student chose a device that is still
+  // plugged in, keep it; otherwise go by Chime's priority order (lowest first):
+  // Bluetooth(0) > wired/USB headset(1) > speaker(2) > earpiece(3).
+  private fun routeAudio(devices: List<MediaDevice>) {
+    val av = meetingSession?.audioVideo ?: return
+    val audio = devices.filter {
+      it.type == MediaDeviceType.AUDIO_BLUETOOTH || it.type == MediaDeviceType.AUDIO_WIRED_HEADSET ||
+        it.type == MediaDeviceType.AUDIO_USB_HEADSET || it.type == MediaDeviceType.AUDIO_BUILTIN_SPEAKER ||
+        it.type == MediaDeviceType.AUDIO_HANDSET
+    }
+    if (audio.isEmpty()) return
+    val picked = userAudioDeviceId?.let { id -> audio.firstOrNull { it.id == id } }
+    if (picked == null) userAudioDeviceId = null // chosen device was unplugged → back to automatic
+    val target = picked ?: audio.minByOrNull { it.order } ?: return
+    try {
+      av.chooseAudioDevice(target)
+      logger.info(TAG, "Audio routed to ${target.label} (${target.type})")
+    } catch (e: Exception) {
+      logger.error(TAG, "chooseAudioDevice failed: ${e.message}")
+    }
+  }
+
+  private fun emitAudioDevices() {
+    val devices = audioDevices()
+    val active = activeAudioDevice()
+    scope.launch {
+      sendEvent("onAudioDevicesChanged", mapOf(
+        "devices" to devices.map { deviceToMap(it) },
+        "activeId" to active?.id
+      ))
+    }
+  }
+
+  // ── Local video helpers ─────────────────────────────────────────────────────
+
+  // Decode a bundled background (assets/live-bg/bg-N.jpg, 1280x720).
+  private fun loadBackground(sel: String): Bitmap? = try {
+    reactContext.assets.open("live-bg/bg-$sel.jpg").use { BitmapFactory.decodeStream(it) }
+  } catch (e: Exception) {
+    logger.error(TAG, "Background $sel not found: ${e.message}")
+    null
+  }
+
+  // Stop whatever local video pipeline is running (built-in camera or custom).
+  private fun stopLocalVideoPipeline() {
+    try { meetingSession?.audioVideo?.stopLocalVideo() } catch (e: Exception) {}
+    val cam = cameraSource
+    val proc = bgProcessor
+    cameraSource = null
+    bgProcessor = null
+    try { if (cam != null && proc != null) cam.removeVideoSink(proc) } catch (e: Exception) {}
+    try { cam?.stop() } catch (e: Exception) {}
+    try { proc?.release() } catch (e: Exception) {}
+  }
+
+  // Start local video: plain built-in camera, or camera → background replacement
+  // → Chime when a background is selected. Falls back to the plain camera if the
+  // background pipeline can't be built. Returns "background" or "plain".
+  private fun startLocalVideoPipeline(): String {
+    val av = meetingSession?.audioVideo ?: return "plain"
+    stopLocalVideoPipeline()
+
+    if (videoBackground.isNotEmpty()) {
+      val image = loadBackground(videoBackground)
+      if (image != null) {
+        try {
+          val ctx = reactContext.applicationContext
+          val cam = DefaultCameraCaptureSource(
+            ctx, logger, DefaultSurfaceTextureCaptureSourceFactory(logger, eglCoreFactory)
+          )
+          val proc = BackgroundReplacementVideoFrameProcessor(
+            logger, eglCoreFactory, ctx, BackgroundReplacementConfiguration(image)
+          )
+          cam.addVideoSink(proc)
+          cam.start()
+          av.startLocalVideo(proc)
+          cameraSource = cam
+          bgProcessor = proc
+          return "background"
+        } catch (e: Exception) {
+          logger.error(TAG, "Background pipeline failed, using plain camera: ${e.message}")
+          stopLocalVideoPipeline()
+        }
+      }
+    }
+    av.startLocalVideo()
+    return "plain"
   }
 
   override fun definition() = ModuleDefinition {
@@ -61,26 +192,25 @@ class ExpoAWSChimeModule : Module() {
       "onRemoveVideoTile",
       "onDataMessage",
       "onConnectionState",
+      "onAudioDevicesChanged",
       "onError"
     )
 
-    AsyncFunction("startMeeting") { meetingInfo: Map<String, Any>, attendeeInfo: Map<String, Any> ->
+    AsyncFunction("startMeeting") { meetingInfo: Map<String, Any>, attendeeInfo: Map<String, Any>, title: String? ->
       try {
-        logger.info(TAG, "Starting meeting with info: $meetingInfo and attendee info: $attendeeInfo")
+        logger.info(TAG, "Starting meeting")
 
-        // Safely extract meeting info with null checks
         val meetingId = meetingInfo["MeetingId"]?.toString()
           ?: throw Exception("MeetingId is required")
-        val externalMeetingId = meetingInfo["ExternalMeetingId"]?.toString()
+        meetingInfo["ExternalMeetingId"]?.toString()
           ?: throw Exception("ExternalMeetingId is required")
-        val mediaRegion = meetingInfo["MediaRegion"]?.toString()
+        meetingInfo["MediaRegion"]?.toString()
           ?: throw Exception("MediaRegion is required")
 
-        // Safely extract media placement with null checks
+        @Suppress("UNCHECKED_CAST")
         val mediaPlacement = meetingInfo["MediaPlacement"] as? Map<String, Any>
           ?: throw Exception("MediaPlacement is required")
 
-        // Extract URLs with null checks
         val audioFallbackUrl = mediaPlacement["AudioFallbackUrl"]?.toString()
           ?: throw Exception("AudioFallbackUrl is required")
         val audioHostUrl = mediaPlacement["AudioHostUrl"]?.toString()
@@ -90,7 +220,6 @@ class ExpoAWSChimeModule : Module() {
         val turnControlUrl = mediaPlacement["TurnControlUrl"]?.toString()
           ?: throw Exception("TurnControlUrl is required")
 
-        // Safely extract attendee info with null checks
         val attendeeId = attendeeInfo["AttendeeId"]?.toString()
           ?: throw Exception("AttendeeId is required")
         val externalUserId = attendeeInfo["ExternalUserId"]?.toString()
@@ -99,26 +228,29 @@ class ExpoAWSChimeModule : Module() {
           ?: throw Exception("JoinToken is required")
 
         sessionStopped = false
-        logger.info(TAG, "Creating meeting session")
+        userAudioDeviceId = null
+        localVideoOn = false
+        eglCoreFactory = DefaultEglCoreFactory()
+
         val configuration = MeetingSessionConfiguration(
           meetingId,
           MeetingSessionCredentials(attendeeId, externalUserId, joinToken),
           MeetingSessionURLs(audioFallbackUrl, audioHostUrl, turnControlUrl, signalingUrl, ::defaultUrlRewriter)
         )
-        meetingSession = DefaultMeetingSession(configuration, logger, reactContext)
+        meetingSession = DefaultMeetingSession(configuration, logger, reactContext, eglCoreFactory)
         logger.info(TAG, "Meeting session created")
 
         meetingSession?.audioVideo?.let { audioVideo ->
-          // Add audio/video observer
           audioVideo.addAudioVideoObserver(object : AudioVideoObserver {
             override fun onAudioSessionStarted(reconnecting: Boolean) {
-              logger.info(TAG, "Audio session started with reconnecting: $reconnecting")
+              logger.info(TAG, "Audio session started (reconnecting=$reconnecting)")
               scope.launch {
+                // Route to headset/Bluetooth if connected (audio client is up now —
+                // chooseAudioDevice is a no-op before this point).
+                routeAudio(audioDevices())
+                emitAudioDevices()
                 if (!reconnecting) {
-                  sendEvent("onMeetingStart", mapOf(
-                    "timestamp" to System.currentTimeMillis()
-                  ))
-                  logger.info(TAG, "Sent onMeetingStart event")
+                  sendEvent("onMeetingStart", mapOf("timestamp" to System.currentTimeMillis()))
                 }
                 // Always report "connected" (fresh connect AND auto-reconnect recovery).
                 sendEvent("onConnectionState", mapOf("state" to "connected"))
@@ -128,13 +260,13 @@ class ExpoAWSChimeModule : Module() {
             override fun onAudioSessionStopped(sessionStatus: MeetingSessionStatus) {
               logger.info(TAG, "Audio session stopped with status: ${sessionStatus.statusCode}")
               sessionStopped = true
+              LiveClassService.stop(reactContext)
               scope.launch {
                 val statusCode = sessionStatus.statusCode?.value ?: 0
                 sendEvent("onMeetingEnd", mapOf(
                   "sessionStatus" to statusCode,
                   "timestamp" to System.currentTimeMillis()
                 ))
-                logger.info(TAG, "Sent onMeetingEnd event")
               }
             }
 
@@ -163,13 +295,22 @@ class ExpoAWSChimeModule : Module() {
             override fun onVideoSessionStartedConnecting() {}
           })
 
+          // Headset / Bluetooth plugged or unplugged mid-class → re-route + tell JS.
+          val obs = object : DeviceChangeObserver {
+            override fun onAudioDeviceChanged(freshAudioDeviceList: List<MediaDevice>) {
+              logger.info(TAG, "Audio devices changed: $freshAudioDeviceList")
+              routeAudio(freshAudioDeviceList)
+              emitAudioDevices()
+            }
+          }
+          deviceObserver = obs
+          audioVideo.addDeviceChangeObserver(obs)
+
           // Data messages (chat / reactions / moderation / recording indicator).
           // Same topics + JSON payloads as the desktop app so both interoperate.
-          // Callback arrives on the main thread (per Chime SDK docs).
           for (topic in DATA_TOPICS) {
             audioVideo.addRealtimeDataMessageObserver(topic, object : DataMessageObserver {
               override fun onDataMessageReceived(dataMessage: DataMessage) {
-                // Own messages are not echoed back unless throttled; ignore throttled ones.
                 if (dataMessage.throttled) return
                 sendEvent("onDataMessage", mapOf(
                   "topic" to dataMessage.topic,
@@ -182,96 +323,73 @@ class ExpoAWSChimeModule : Module() {
             })
           }
 
-          // Add realtime observer for attendee events
           audioVideo.addRealtimeObserver(object : RealtimeObserver {
             override fun onVolumeChanged(volumeUpdates: Array<VolumeUpdate>) {}
             override fun onSignalStrengthChanged(signalUpdates: Array<SignalUpdate>) {}
 
             override fun onAttendeesJoined(attendeeInfo: Array<AttendeeInfo>) {
               scope.launch {
-                val attendeeIds = attendeeInfo.map { it.attendeeId }
-                val externalUserIds = attendeeInfo.map { it.externalUserId }
                 sendEvent("onAttendeesJoin", mapOf(
-                  "attendeeIds" to attendeeIds,
-                  "externalUserIds" to externalUserIds
+                  "attendeeIds" to attendeeInfo.map { it.attendeeId },
+                  "externalUserIds" to attendeeInfo.map { it.externalUserId }
                 ))
-                logger.info(TAG, "Sent onAttendeesJoin event")
               }
             }
 
             override fun onAttendeesLeft(attendeeInfo: Array<AttendeeInfo>) {
               scope.launch {
-                val attendeeIds = attendeeInfo.map { it.attendeeId }
-                val externalUserIds = attendeeInfo.map { it.externalUserId }
                 sendEvent("onAttendeesLeave", mapOf(
-                  "attendeeIds" to attendeeIds,
-                  "externalUserIds" to externalUserIds
+                  "attendeeIds" to attendeeInfo.map { it.attendeeId },
+                  "externalUserIds" to attendeeInfo.map { it.externalUserId }
                 ))
-                logger.info(TAG, "Sent onAttendeesLeave event")
               }
             }
 
             override fun onAttendeesDropped(attendeeInfo: Array<AttendeeInfo>) {
               scope.launch {
-                val attendeeIds = attendeeInfo.map { it.attendeeId }
-                val externalUserIds = attendeeInfo.map { it.externalUserId }
                 sendEvent("onAttendeesLeave", mapOf(
-                  "attendeeIds" to attendeeIds,
-                  "externalUserIds" to externalUserIds
+                  "attendeeIds" to attendeeInfo.map { it.attendeeId },
+                  "externalUserIds" to attendeeInfo.map { it.externalUserId }
                 ))
-                logger.info(TAG, "Sent onAttendeesLeave event for dropped attendees")
               }
             }
 
             override fun onAttendeesMuted(attendeeInfo: Array<AttendeeInfo>) {
               scope.launch {
-                val attendeeIds = attendeeInfo.map { it.attendeeId }
-                sendEvent("onAttendeesMute", mapOf("attendeeIds" to attendeeIds))
-                logger.info(TAG, "Sent onAttendeesMute event")
+                sendEvent("onAttendeesMute", mapOf("attendeeIds" to attendeeInfo.map { it.attendeeId }))
               }
             }
 
             override fun onAttendeesUnmuted(attendeeInfo: Array<AttendeeInfo>) {
               scope.launch {
-                val attendeeIds = attendeeInfo.map { it.attendeeId }
-                sendEvent("onAttendeesUnmute", mapOf("attendeeIds" to attendeeIds))
-                logger.info(TAG, "Sent onAttendeesUnmute event")
+                sendEvent("onAttendeesUnmute", mapOf("attendeeIds" to attendeeInfo.map { it.attendeeId }))
               }
             }
           })
 
-          // Add video tile observer
           audioVideo.addVideoTileObserver(object : VideoTileObserver {
             override fun onVideoTileAdded(tileState: VideoTileState) {
               scope.launch {
-                sendEvent(
-                  "onAddVideoTile",
-                  mapOf(
-                    "tileId" to tileState.tileId,
-                    "attendeeId" to tileState.attendeeId,
-                    "isLocal" to tileState.isLocalTile,
-                    "isScreenShare" to tileState.isContent,
-                    "pauseState" to tileState.pauseState.ordinal,
-                    "videoStreamContentHeight" to tileState.videoStreamContentHeight,
-                    "videoStreamContentWidth" to tileState.videoStreamContentWidth
-                  )
-                )
-                logger.info(TAG, "Sent onAddVideoTile event")
+                sendEvent("onAddVideoTile", mapOf(
+                  "tileId" to tileState.tileId,
+                  "attendeeId" to tileState.attendeeId,
+                  "isLocal" to tileState.isLocalTile,
+                  "isScreenShare" to tileState.isContent,
+                  "pauseState" to tileState.pauseState.ordinal,
+                  "videoStreamContentHeight" to tileState.videoStreamContentHeight,
+                  "videoStreamContentWidth" to tileState.videoStreamContentWidth
+                ))
               }
             }
 
             override fun onVideoTileRemoved(tileState: VideoTileState) {
               scope.launch {
-                sendEvent(
-                  "onRemoveVideoTile",
-                  mapOf(
-                    "tileId" to tileState.tileId,
-                    "attendeeId" to tileState.attendeeId,
-                    "isLocal" to tileState.isLocalTile,
-                    "isScreenShare" to tileState.isContent
-                  )
-                )
-                logger.info(TAG, "Sent onRemoveVideoTile event")
+                sendEvent("onRemoveVideoTile", mapOf(
+                  "tileId" to tileState.tileId,
+                  "attendeeId" to tileState.attendeeId,
+                  "isLocal" to tileState.isLocalTile,
+                  "isScreenShare" to tileState.isContent
+                ))
               }
             }
 
@@ -280,64 +398,50 @@ class ExpoAWSChimeModule : Module() {
             override fun onVideoTileSizeChanged(tileState: VideoTileState) {}
           })
 
-          // Start audio and video
-          logger.info(TAG, "Starting audio and video")
+          // NOTE: audio routing is no longer forced to the loudspeaker. Chime manages
+          // the call audio mode itself, and routeAudio() picks headset/Bluetooth when
+          // connected (speaker otherwise) once the audio session has started.
           audioVideo.start()
           audioVideo.startRemoteVideo()
-          logger.info(TAG, "Audio and video started")
 
-          // Force audio to route through speaker
-          logger.info(TAG, "Forcing audio to route through speaker")
-          val audioManager = reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-          audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-          audioManager.isSpeakerphoneOn = true
-          logger.info(TAG, "Audio routed through speaker")
+          // Keep the class alive when the app goes to the background.
+          LiveClassService.start(reactContext, title)
         }
 
         logger.info(TAG, "Meeting started successfully")
       } catch (e: Exception) {
         logger.error(TAG, "Error starting meeting: ${e.message}")
-        scope.launch {
-          sendEvent("onError", mapOf("error" to e.message))
-        }
+        LiveClassService.stop(reactContext)
+        scope.launch { sendEvent("onError", mapOf("error" to e.message)) }
         throw e
       }
     }
 
     AsyncFunction("stopMeeting") {
-      // Reset audio routing when stopping the meeting
       logger.info(TAG, "Stopping meeting")
-      val audioManager = reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-      audioManager.mode = AudioManager.MODE_NORMAL
-      audioManager.isSpeakerphoneOn = false
+      LiveClassService.stop(reactContext)
+      localVideoOn = false
+
+      deviceObserver?.let { obs ->
+        try { meetingSession?.audioVideo?.removeDeviceChangeObserver(obs) } catch (e: Exception) {}
+      }
+      deviceObserver = null
 
       // Nothing to tear down (never started) or Chime already stopped the session
-      // itself: just release the reference. Avoids a pointless 5s blocking wait.
+      // itself: just release resources. Avoids a pointless 5s blocking wait.
       if (meetingSession == null || sessionStopped) {
-        try { meetingSession?.audioVideo?.stopLocalVideo() } catch (e: Exception) {}
+        stopLocalVideoPipeline()
         meetingSession = null
         return@AsyncFunction null
       }
 
-      // Code below addresses the SIGSEV error:
-      // libamazon_chime_media_client.so (offset 0x1450000) (Java_com_xodee_client_video_VideoClient_doSetSending+100
-      // that occurs when joining again a meeting right after stopping it.
-      // The issue is probably caused by DefaultVideoClientController::stopAndDestroy
-      // that conflicts with DefaultVideoClientController::startLocalVideo
-
-      // Create a deferred that will be completed when cleanup is done
+      // Wait for the video session to stop before releasing (avoids a native
+      // SIGSEGV when re-joining right after stopping).
       val cleanupCompleted = kotlinx.coroutines.CompletableDeferred<Unit>()
-
-      // Add a temporary observer to wait for video session to stop
       meetingSession?.audioVideo?.addAudioVideoObserver(object : AudioVideoObserver {
         override fun onVideoSessionStopped(sessionStatus: MeetingSessionStatus) {
-          logger.info(TAG, "Video session stopped with status: ${sessionStatus.statusCode}")
-          meetingSession = null
-          logger.info(TAG, "Meeting stopped and cleaned up")
           cleanupCompleted.complete(Unit)
         }
-
-        // Implement other required methods with empty bodies
         override fun onAudioSessionStarted(reconnecting: Boolean) {}
         override fun onAudioSessionStopped(sessionStatus: MeetingSessionStatus) {}
         override fun onAudioSessionCancelledReconnect() {}
@@ -353,28 +457,16 @@ class ExpoAWSChimeModule : Module() {
       })
 
       try {
-        // First stop local video if it's running
-        meetingSession?.audioVideo?.stopLocalVideo()
-
-        // Then stop the meeting session which will trigger stopAndDestroy
+        stopLocalVideoPipeline()
         meetingSession?.audioVideo?.stop()
-
-        // Wait for cleanup to complete with a timeout
         kotlinx.coroutines.runBlocking {
-          kotlinx.coroutines.withTimeout(5000) {
-            cleanupCompleted.await()
-          }
+          kotlinx.coroutines.withTimeout(5000) { cleanupCompleted.await() }
         }
       } catch (e: Exception) {
         logger.error(TAG, "Error stopping meeting: ${e.message}")
-        scope.launch {
-          sendEvent("onError", mapOf("error" to e.message))
-        }
       }
 
-      // Clean the meeting session
       meetingSession = null
-
       return@AsyncFunction null
     }
 
@@ -389,55 +481,64 @@ class ExpoAWSChimeModule : Module() {
     }
 
     AsyncFunction("mute") {
-      logger.info(TAG, "Muting local audio")
       meetingSession?.audioVideo?.realtimeLocalMute()
-      logger.info(TAG, "Local audio muted")
       return@AsyncFunction null
     }
 
     AsyncFunction("unmute") {
-      logger.info(TAG, "Unmuting local audio")
       meetingSession?.audioVideo?.realtimeLocalUnmute()
-      logger.info(TAG, "Local audio unmuted")
       return@AsyncFunction null
     }
 
+    // Returns "background" when the virtual background is applied, else "plain".
     AsyncFunction("startLocalVideo") {
-      logger.info(TAG, "Starting local video")
-      meetingSession?.audioVideo?.startLocalVideo()
-      logger.info(TAG, "Local video started")
-      return@AsyncFunction null
+      val mode = startLocalVideoPipeline()
+      localVideoOn = true
+      return@AsyncFunction mode
     }
 
     AsyncFunction("stopLocalVideo") {
-      logger.info(TAG, "Stopping local video")
-      meetingSession?.audioVideo?.stopLocalVideo()
-      logger.info(TAG, "Local video stopped")
+      stopLocalVideoPipeline()
+      localVideoOn = false
+      return@AsyncFunction null
+    }
+
+    // Select the virtual background ("" = none, "1".."7"). If the camera is on,
+    // it is re-applied immediately. Returns the resulting mode ("background" /
+    // "plain" / "off" when the camera is off).
+    AsyncFunction("setVideoBackground") { sel: String ->
+      videoBackground = sel
+      if (!localVideoOn) return@AsyncFunction "off"
+      return@AsyncFunction startLocalVideoPipeline()
+    }
+
+    // ── Audio output selection ──
+    AsyncFunction("listAudioDevices") {
+      return@AsyncFunction mapOf(
+        "devices" to audioDevices().map { deviceToMap(it) },
+        "activeId" to activeAudioDevice()?.id
+      )
+    }
+
+    // Pick an output by id. Pass "" to go back to automatic (headset > speaker).
+    AsyncFunction("chooseAudioDevice") { id: String ->
+      userAudioDeviceId = id.ifEmpty { null }
+      routeAudio(audioDevices())
+      emitAudioDevices()
       return@AsyncFunction null
     }
 
     View(ExpoAWSChimeView::class) {
       Prop("tileId") { view: ExpoAWSChimeView, tileId: Int ->
-        logger.info(TAG, "Binding tileId: $tileId")
-        meetingSession?.let { session ->
-          view.setTileId(session, tileId)
-          logger.info(TAG, "tileId $tileId bound")
-        }
+        meetingSession?.let { session -> view.setTileId(session, tileId) }
       }
 
       Prop("isLocal") { view: ExpoAWSChimeView, isLocal: Boolean ->
-        logger.info(TAG, "Setting isLocal: $isLocal")
         view.setIsLocal(isLocal)
-        logger.info(TAG, "isLocal set to $isLocal")
       }
 
       OnViewDestroys {
-        meetingSession?.let { session ->
-          val tileId = it.tileId
-          logger.info(TAG, "Unbinding tileId: $tileId")
-          it.unsetTileId(session)
-          logger.info(TAG, "tileId $tileId unbound")
-        }
+        meetingSession?.let { session -> it.unsetTileId(session) }
       }
     }
   }

@@ -18,11 +18,18 @@ export {
   unmute,
   startLocalVideo,
   stopLocalVideo,
+  setVideoBackground,
+  listAudioDevices,
+  chooseAudioDevice,
   sendDataMessage,
   addListener,
+  isChimeAvailable,
 } from './src/ExpoAWSChimeModule';
 export type {
   AttendeeInfo,
+  AudioDevice,
+  AudioDevicesState,
+  VideoMode,
   MeetingInfo,
   VideoTileEvent,
   ChimeEventMap,

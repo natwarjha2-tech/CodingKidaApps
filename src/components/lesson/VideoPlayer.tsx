@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Video, { type OnProgressData, type OnLoadData } from 'react-native-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -27,6 +27,11 @@ interface VideoPlayerProps {
   /** True while the signed play URL is still being fetched. Shows a spinner
    *  instead of "Video not available" during the brief fetch window. */
   loading?: boolean;
+  /** Pause playback (e.g. while the full-screen quiz is open). */
+  paused?: boolean;
+  /** Action row under the video: `leading` (likes / views) | Quality | `trailing` (save / download / coins). */
+  leading?: ReactNode;
+  trailing?: ReactNode;
 }
 
 /**
@@ -48,7 +53,7 @@ const FALLBACK_HLS_LADDER = ['720p', '480p', '360p'];
 export function VideoPlayer({
   videoUrl, title, qualityUrls, hlsQualities,
   hlsMasterUrl, hlsCookieHeader,
-  onProgress, onComplete, onViewCounted, onQualityChange, loading,
+  onProgress, onComplete, onViewCounted, onQualityChange, loading, paused, leading, trailing,
 }: VideoPlayerProps) {
   const videoRef = useRef<any>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -171,8 +176,32 @@ export function VideoPlayer({
 
   const effectiveUrl = sourceUri;
 
+  // ONE action row under the video: likes / views | Quality | save / download / coins.
+  const qualityPill = showQualityButton && !!sourceUri ? (
+    <TouchableOpacity
+      style={[styles.pillBtn, showQualityMenu && styles.pillBtnOpen]}
+      onPress={() => setShowQualityMenu(!showQualityMenu)}
+      accessibilityRole="button"
+      accessibilityLabel={`Video quality: ${selectedQuality}`}
+      hitSlop={6}
+    >
+      <Text style={styles.pillBtnText}>
+        {selectedQuality === AUTO ? '⚡ Auto' : selectedQuality} ▾
+      </Text>
+    </TouchableOpacity>
+  ) : null;
+  const controlsRow = (leading || trailing || qualityPill) ? (
+    <View style={styles.controlsBar}>
+      {leading}
+      {qualityPill}
+      <View style={{ flex: 1 }} />
+      {trailing}
+    </View>
+  ) : null;
+
   if (!effectiveUrl) {
     return (
+      <View>
       <View style={styles.placeholder}>
         {loading ? (
           <>
@@ -187,6 +216,8 @@ export function VideoPlayer({
           </>
         )}
       </View>
+      {controlsRow}
+      </View>
     );
   }
 
@@ -199,6 +230,7 @@ export function VideoPlayer({
           source={videoSource}
           style={styles.video}
           controls={true}
+          paused={!!paused}
           resizeMode="contain"
           onLoad={handleLoad}
           onBuffer={handleBuffer}
@@ -216,28 +248,15 @@ export function VideoPlayer({
             <ActivityIndicator size="large" color={Colors.primary} />
           </View>
         )}
+
       </View>
 
-      {/* Quality selector. Options open as an inline chip row below the bar —
-          it stays inside the layout so taps always register (absolute
-          dropdowns outside parent bounds don't get touches on Android). */}
-      {showQualityButton && (
-        <View style={styles.controlsBar}>
-          <Text style={styles.chipRowLabel}>Quality:</Text>
-          <TouchableOpacity
-            style={[styles.pillBtn, showQualityMenu && styles.pillBtnOpen]}
-            onPress={() => setShowQualityMenu(!showQualityMenu)}
-          >
-            <Text style={styles.pillBtnText}>
-              {selectedQuality === AUTO ? '⚡ Auto' : selectedQuality} ▾
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {controlsRow}
 
+      {/* Quality options: inline chip row under the action row (stays inside
+          the layout so taps always register on Android). */}
       {showQualityMenu && showQualityButton && (
         <View style={styles.chipRow}>
-          <Text style={styles.chipRowLabel}>Quality</Text>
           {menuOptions.map((q) => (
             <TouchableOpacity
               key={q}
@@ -272,17 +291,34 @@ const styles = StyleSheet.create({
   phMeta: { color: Colors.muted, fontSize: Typography.xs, marginTop: 4 },
 
   controlsBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 8, paddingVertical: 6,
     backgroundColor: '#0a0a14',
   },
   pillBtn: {
-    backgroundColor: 'rgba(108,71,255,0.15)', borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: 'rgba(108,71,255,0.15)', borderRadius: 14, marginLeft: 6,
+    paddingHorizontal: 9, paddingVertical: 4,
     borderWidth: 1, borderColor: 'rgba(108,71,255,0.3)',
   },
   pillBtnOpen: { backgroundColor: 'rgba(108,71,255,0.3)' },
-  pillBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+  qPill: {
+    position: 'absolute', top: 8, right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 14,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  qPillOpen: { backgroundColor: 'rgba(108,71,255,0.85)' },
+  qPillText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  qMenu: {
+    position: 'absolute', top: 38, right: 8, minWidth: 110, paddingVertical: 4,
+    backgroundColor: 'rgba(15,15,26,0.96)', borderRadius: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+  },
+  qItem: { paddingHorizontal: 12, paddingVertical: 7 },
+  qItemActive: { backgroundColor: 'rgba(108,71,255,0.25)' },
+  qItemText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '600' },
+  qItemTextActive: { color: '#fff' },
+  pillBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
 
   chipRow: {
     flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8,

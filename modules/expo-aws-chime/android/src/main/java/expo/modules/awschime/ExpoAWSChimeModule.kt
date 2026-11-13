@@ -190,6 +190,7 @@ class ExpoAWSChimeModule : Module() {
       "onAttendeesUnmute",
       "onAddVideoTile",
       "onRemoveVideoTile",
+      "onVideoTileSizeChanged",
       "onDataMessage",
       "onConnectionState",
       "onAudioDevicesChanged",
@@ -395,7 +396,16 @@ class ExpoAWSChimeModule : Module() {
 
             override fun onVideoTilePaused(tileState: VideoTileState) {}
             override fun onVideoTileResumed(tileState: VideoTileState) {}
-            override fun onVideoTileSizeChanged(tileState: VideoTileState) {}
+            // Real stream size (e.g. a 1920x1080 shared screen) so JS can size the
+      // view to the same aspect ratio — the renderer crops to the view's shape.
+      override fun onVideoTileSizeChanged(tileState: VideoTileState) {
+        sendEvent("onVideoTileSizeChanged", mapOf(
+          "tileId" to tileState.tileId,
+          "isScreenShare" to tileState.isContent,
+          "videoStreamContentHeight" to tileState.videoStreamContentHeight,
+          "videoStreamContentWidth" to tileState.videoStreamContentWidth
+        ))
+      }
           })
 
           // NOTE: audio routing is no longer forced to the loudspeaker. Chime manages
@@ -535,6 +545,11 @@ class ExpoAWSChimeModule : Module() {
 
       Prop("isLocal") { view: ExpoAWSChimeView, isLocal: Boolean ->
         view.setIsLocal(isLocal)
+      }
+
+      // true = show the whole frame (screen share); false = crop to fill (cameras).
+      Prop("fit") { view: ExpoAWSChimeView, fit: Boolean ->
+        view.setFit(fit)
       }
 
       OnViewDestroys {

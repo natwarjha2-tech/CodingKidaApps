@@ -3,6 +3,7 @@ package expo.modules.awschime
 import android.content.Context
 import android.view.ViewGroup
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.DefaultVideoRenderView
+import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.VideoScalingType
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.gl.EglCoreFactory
 import com.amazonaws.services.chime.sdk.meetings.audiovideo.video.gl.DefaultEglCoreFactory
 import com.amazonaws.services.chime.sdk.meetings.session.MeetingSession
@@ -18,6 +19,10 @@ class ExpoAWSChimeView(context: Context, appContext: AppContext) : ExpoView(cont
 
   companion object {
     private const val TAG = "ExpoAWSChimeView"
+    // Which view currently owns each tile. When the JS layout changes, a NEW
+    // view can bind a tile before the OLD view is destroyed; the old view must
+    // then NOT unbind (that would leave the new view black).
+    private val owners = mutableMapOf<Int, ExpoAWSChimeView>()
   }
 
   private val reactContext
@@ -43,9 +48,17 @@ class ExpoAWSChimeView(context: Context, appContext: AppContext) : ExpoView(cont
     logger.info(TAG, "Set isLocal to $isLocal for tile $tileId")
   }
 
+  // AspectFill (SDK default) crops the frame to fill the view; AspectFit shows
+  // the whole frame (letterboxed). Screen share must use fit so nothing is cut off.
+  fun setFit(fit: Boolean) {
+    videoView.scalingType = if (fit) VideoScalingType.AspectFit else VideoScalingType.AspectFill
+    videoView.requestLayout()
+  }
+
   fun setTileId(meetingSession: MeetingSession, tileId: Int) {
     logger.info(TAG, "Binding video view to tile $tileId")
     this.tileId = tileId
+    owners[tileId] = this
     meetingSession.audioVideo.bindVideoView(videoView, tileId)
     logger.info(TAG, "Successfully bound video view to tile $tileId")
   }
@@ -53,6 +66,14 @@ class ExpoAWSChimeView(context: Context, appContext: AppContext) : ExpoView(cont
   fun unsetTileId(meetingSession: MeetingSession) {
     val currentTileId = tileId
     if (currentTileId != null) {
+      if (owners[currentTileId] !== this) {
+        // Another view took this tile over; leave its binding alone.
+        logger.info(TAG, "Tile $currentTileId owned by another view; skip unbind")
+        this.tileId = null
+        this.isLocalTile = false
+        return
+      }
+      owners.remove(currentTileId)
       logger.info(TAG, "Unbinding video view from tile $currentTileId")
       meetingSession.audioVideo.unbindVideoView(currentTileId)
       this.tileId = null

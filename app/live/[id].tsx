@@ -20,7 +20,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, BackHandler,
-  ScrollView, TextInput, Platform, Image, Linking, AppState,
+  ScrollView, TextInput, Platform, Image, Linking, AppState, Animated,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +43,9 @@ import {
 import { useAuthStore } from '@/store';
 import { Colors } from '@/theme';
 import { markLiveJoined, markLiveLeft } from '@/utils/liveJoined';
+import { LiveIcon, type LiveIconName } from '@/components/live/LiveIcons';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import { StatusBar } from 'expo-status-bar';
 
 // ── Protocol (must match desktop) ────────────────────────────────────────────
 const TOPIC_CHAT = 'ck-live-chat';
@@ -116,6 +119,20 @@ function isContent(id: string | undefined): boolean {
   return !!id && id.indexOf('#content') !== -1;
 }
 
+// Real people from a Chime join/leave batch. A screen-share pseudo-attendee is
+// marked with "#content" on its ATTENDEE id (its external user id can be the
+// presenter's own id), so check both — otherwise "host stopped sharing" looks
+// like "host left" and the participant count drops.
+function personUserIds(attendeeIds: string[], externalUserIds: string[]): string[] {
+  const out: string[] = [];
+  externalUserIds.forEach((eid, i) => {
+    if (isContent(eid) || isContent(attendeeIds[i])) return;
+    const u = baseUserId(eid);
+    if (u) out.push(u);
+  });
+  return out;
+}
+
 function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(total / 3600);
@@ -168,6 +185,43 @@ const BACKGROUNDS: { sel: string; thumb: number | null; label: string }[] = [
   { sel: '7', thumb: require('../../assets/live-bg/bg-7.jpg'), label: '7' },
 ];
 const BG_PREF_KEY = 'ck_live_bg'; // same key name as desktop
+
+// WhatsApp-style emoji bar that pops in above a long-pressed message.
+function ReactionPicker({
+  mine, alignRight, onPick,
+}: { mine: Record<string, boolean>; alignRight: boolean; onPick: (emoji: string) => void }) {
+  const s = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(s, { toValue: 1, friction: 6, tension: 140, useNativeDriver: true }).start();
+  }, [s]);
+  return (
+    <Animated.View
+      style={[
+        styles.picker,
+        { alignSelf: alignRight ? 'flex-end' : 'flex-start' },
+        { opacity: s, transform: [{ scale: s.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }] },
+      ]}
+    >
+      {REACTIONS.map((e) => (
+        <TouchableOpacity
+          key={e}
+          onPress={() => onPick(e)}
+          style={[styles.pickerBtn, mine[e] && styles.pickerBtnMine]}
+          activeOpacity={0.6}
+        >
+          <Text style={styles.pickerEmoji}>{e}</Text>
+        </TouchableOpacity>
+      ))}
+    </Animated.View>
+  );
+}
+
+function formatClock(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function audioDeviceIcon(t: AudioDevice['type']): string {
   switch (t) {
@@ -242,6 +296,22 @@ export default function LiveRoomScreen() {
   const [toasts, setToasts] = useState<{ key: string; text: string }[]>([]);
   const [showPeople, setShowPeople] = useState(false);
   const [recording, setRecording] = useState(false);
+
+  // Screen-share layout: the shared screen gets the whole stage; people appear
+  // as a small scrollable strip floating at the bottom (toggleable), and the
+  // reaction bar + dock can be hidden too ("focus"). Only applies while a
+  // screen is being shared.
+  const [showStrip, setShowStrip] = useState(true);
+  // Shared-screen stream size per tile + the space available for it. The Chime
+  // renderer crops video to its view's shape, so the view is sized to the
+  // stream's aspect ratio and centered (letterboxed) to show the WHOLE screen.
+  const [tileSizes, setTileSizes] = useState<Record<number, { w: number; h: number }>>({});
+  const [shareArea, setShareArea] = useState<{ w: number; h: number } | null>(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showReactBar, setShowReactBar] = useState(false);
+  const [fullShare, setFullShare] = useState(false);
+  const fullShareRef = useRef(false);
+  const exitFullShareRef = useRef<() => void>(() => {});
 
   // Chat
   const [showChat, setShowChat] = useState(false);
@@ -519,10 +589,7 @@ export default function LiveRoomScreen() {
       }),
       addListener('onAttendeesJoin', (p) => {
         updateAttMap(p.attendeeIds || [], p.externalUserIds || []);
-        const ids = (p.externalUserIds || [])
-          .filter((eid) => !isContent(eid))
-          .map(baseUserId)
-          .filter(Boolean);
+        const ids = personUserIds(p.attendeeIds || [], p.externalUserIds || []);
         if (ids.length === 0) return;
         ids.forEach((u) => leftSetRef.current.delete(u));
         setPresentIds((prev) => [...new Set([...prev, ...ids])]);
@@ -531,10 +598,9 @@ export default function LiveRoomScreen() {
         });
       }),
       addListener('onAttendeesLeave', (p) => {
-        const ids = (p.externalUserIds || [])
-          .filter((eid) => !isContent(eid))
-          .map(baseUserId)
-          .filter(Boolean);
+        // A screen share ending = the "#content" attendee leaving. That is NOT
+        // the host leaving the class, so it must not change presence/count.
+        const ids = personUserIds(p.attendeeIds || [], p.externalUserIds || []);
         if (ids.length === 0) return;
         ids.forEach((u) => leftSetRef.current.add(u));
         setPresentIds((prev) => prev.filter((x) => !ids.includes(x)));
@@ -558,6 +624,14 @@ export default function LiveRoomScreen() {
       }),
       addListener('onAddVideoTile', (tile) => {
         setVideoTiles((prev) => (prev.some((t) => t.tileId === tile.tileId) ? prev : [...prev, tile]));
+        const w = tile.videoStreamContentWidth || 0;
+        const h = tile.videoStreamContentHeight || 0;
+        if (w > 0 && h > 0) setTileSizes((prev) => ({ ...prev, [tile.tileId]: { w, h } }));
+      }),
+      addListener('onVideoTileSizeChanged', (s) => {
+        const w = s.videoStreamContentWidth || 0;
+        const h = s.videoStreamContentHeight || 0;
+        if (w > 0 && h > 0) setTileSizes((prev) => ({ ...prev, [s.tileId]: { w, h } }));
       }),
       addListener('onRemoveVideoTile', (tile) => {
         setVideoTiles((prev) => prev.filter((t) => t.tileId !== tile.tileId));
@@ -905,6 +979,8 @@ export default function LiveRoomScreen() {
   // Hardware back = leave cleanly (or just go back from a terminal screen).
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Back in full-screen share = just exit full screen (stay in class).
+      if (fullShareRef.current) { exitFullShareRef.current(); return true; }
       if (['ended', 'failed', 'removed', 'error'].includes(stateRef.current)) {
         teardown().finally(() => router.back());
       } else {
@@ -979,6 +1055,78 @@ export default function LiveRoomScreen() {
 
   const isMutedUser = (uid: string) => (uid === myUserId ? micMuted : mutedUsers[uid] === true);
 
+  // Screen share present? -> shared screen is the main view, people go in a strip.
+  const shareTile = sortedTiles.find((t) => t.isScreenShare) || null;
+  const camTiles = sortedTiles.filter((t) => !t.isScreenShare);
+  // While a screen is shared the bottom dock + reaction bar are replaced by the
+  // floating buttons so the shared screen gets the whole phone.
+  const controlsHidden = !!shareTile;
+
+  // Layout switch (share <-> grid) re-creates every camera view. Mount the new
+  // ones only after the old ones are gone, otherwise the old view's unbind can
+  // blank the new one (black tiles after the host stops presenting). Avatars
+  // fill the ~0.4 s gap.
+  const isShareMode = !!shareTile;
+  const [readyMode, setReadyMode] = useState<boolean>(false);
+  useEffect(() => {
+    if (readyMode === isShareMode) return;
+    const t = setTimeout(() => setReadyMode(isShareMode), 400);
+    return () => clearTimeout(t);
+  }, [isShareMode, readyMode]);
+  const videosReady = readyMode === isShareMode;
+
+  // Full-screen landscape view of the shared screen (Meet/Zoom style).
+  const enterFullShare = useCallback(() => {
+    setShowMenu(false); setShowReactBar(false); openPanel(null);
+    setFullShare(true);
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+  }, [openPanel]);
+  const exitFullShare = useCallback(() => {
+    setFullShare(false);
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
+  fullShareRef.current = fullShare;
+  exitFullShareRef.current = exitFullShare;
+  // Sharing stopped while full screen -> back to normal portrait room.
+  useEffect(() => {
+    if (fullShare && !shareTile) exitFullShare();
+  }, [fullShare, shareTile, exitFullShare]);
+  // Always restore portrait when leaving the room.
+  useEffect(() => () => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
+
+  const renderTileHold = (t: VideoTileEvent, mini: boolean) => {
+    const uid = tileUserId(t);
+    const info = uid ? roster[uid] : undefined;
+    const name = uid ? nameFor(uid) : '?';
+    const st = mini ? styles.avatarMini : styles.avatarBig;
+    return (
+      <View style={[styles.tileVideo, styles.avatarTile]}>
+        {info?.avatarUrl ? (
+          <Image source={{ uri: info.avatarUrl }} style={st} />
+        ) : (
+          <View style={st}>
+            <Text style={mini ? styles.avatarMiniTxt : styles.avatarBigTxt}>{(name[0] || '?').toUpperCase()}</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // Box for the shared screen: largest rectangle with the stream's aspect ratio
+  // that fits the available area (16:9 until the real size is known — almost
+  // every desktop screen share is 16:9 or close to it).
+  const shareBox = useMemo(() => {
+    if (!shareTile || !shareArea || shareArea.w <= 0 || shareArea.h <= 0) return null;
+    const sz = tileSizes[shareTile.tileId];
+    const ratio = sz ? sz.w / sz.h : 16 / 9;
+    let w = shareArea.w;
+    let h = w / ratio;
+    if (h > shareArea.h) { h = shareArea.h; w = h * ratio; }
+    return { width: Math.floor(w), height: Math.floor(h) };
+  }, [shareTile, shareArea, tileSizes]);
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (state === 'error') {
     return (
@@ -1029,7 +1177,9 @@ export default function LiveRoomScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar hidden={fullShare} style="light" />
       {/* Top bar: live dot + title + rec + timer + people + leave */}
+      {!fullShare && (
       <View style={styles.topBar}>
         <View style={styles.topLeft}>
           <View style={styles.liveDot} />
@@ -1046,6 +1196,7 @@ export default function LiveRoomScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
       {/* Connection banner */}
       {conn !== 'connected' && !overlay && (
@@ -1058,13 +1209,172 @@ export default function LiveRoomScreen() {
 
       {/* Video stage */}
       <View style={styles.stage}>
+        {shareTile ? (
+          <View style={styles.shareStage}>
+            {/* Call toolbar: one horizontal row in its own band above the shared
+                screen (never over it). Standard call icons, like Meet / Zoom. */}
+            {!fullShare && (
+            <View style={styles.shareBar}>
+              {([
+                {
+                  key: 'mic', label: micLocked ? 'Locked' : micMuted ? 'Unmute' : 'Mute',
+                  icon: (micMuted ? 'micOff' : 'mic') as LiveIconName, off: micMuted, on: false,
+                  onPress: () => { setShowMenu(false); setShowReactBar(false); toggleMic(); },
+                },
+                {
+                  key: 'cam', label: camLocked ? 'Locked' : camOn ? 'Stop cam' : 'Camera',
+                  icon: (camOn ? 'cam' : 'camOff') as LiveIconName, off: !camOn, on: false,
+                  onPress: () => { setShowMenu(false); setShowReactBar(false); toggleCam(); },
+                },
+                {
+                  key: 'react', label: 'React', icon: 'reaction' as LiveIconName, off: false, on: showReactBar,
+                  onPress: () => { setShowReactBar((v) => !v); setShowMenu(false); },
+                },
+                {
+                  key: 'chat', label: 'Chat', icon: 'chat' as LiveIconName, off: false, on: showChat,
+                  onPress: () => { openPanel(showChat ? null : 'chat'); setShowMenu(false); setShowReactBar(false); },
+                },
+                {
+                  key: 'people', label: 'People', icon: 'people' as LiveIconName, off: false, on: showStrip,
+                  onPress: () => setShowStrip((v) => !v),
+                },
+                {
+                  key: 'more', label: 'More', icon: 'more' as LiveIconName, off: false, on: showMenu,
+                  onPress: () => { setShowMenu((v) => !v); setShowReactBar(false); },
+                },
+              ]).map((b) => (
+                <TouchableOpacity
+                  key={b.key}
+                  style={styles.shareBarItem}
+                  onPress={b.onPress}
+                  accessibilityRole="button"
+                  accessibilityLabel={b.label}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.shareBarCircle, b.off && styles.shareBarCircleOff, b.on && styles.shareBarCircleOn]}>
+                    <LiveIcon name={b.icon} size={19} />
+                  </View>
+                  <Text style={styles.shareBarLabel} numberOfLines={1}>{b.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            )}
+
+            {/* 1st priority: the shared screen takes all the space between the
+                toolbar and the people strip (nothing is drawn on top of it). */}
+            <View
+              style={styles.shareVideoWrap}
+              onLayout={(e) => {
+                const { width, height } = e.nativeEvent.layout;
+                setShareArea((cur) => (cur && cur.w === width && cur.h === height ? cur : { w: width, h: height }));
+              }}
+            >
+              {shareBox && (
+                <ExpoAWSChimeView
+                  key={`share-${shareTile.tileId}`}
+                  tileId={shareTile.tileId}
+                  isLocal={shareTile.isLocal}
+                  fit
+                  style={shareBox}
+                />
+              )}
+              {/* Full screen: rotate to landscape and give the shared screen the
+                  whole display (portrait leaves big empty bands above/below). */}
+              <TouchableOpacity
+                style={styles.fullBtn}
+                onPress={fullShare ? exitFullShare : enterFullShare}
+                accessibilityRole="button"
+                accessibilityLabel={fullShare ? 'Exit full screen' : 'Full screen'}
+                hitSlop={8}
+                activeOpacity={0.8}
+              >
+                <LiveIcon name={fullShare ? 'fullscreenExit' : 'fullscreen'} size={22} />
+              </TouchableOpacity>
+            </View>
+
+            {/* People: small strip under the screen, scrolls sideways for any class size. */}
+            {showStrip && !fullShare && (
+              <View style={styles.strip}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stripContent}>
+                  {camTiles.map((t) => (
+                    <View key={t.tileId} style={styles.miniTile}>
+                      {videosReady
+                        ? <ExpoAWSChimeView tileId={t.tileId} isLocal={t.isLocal} style={styles.tileVideo} />
+                        : renderTileHold(t, true)}
+                      <View style={styles.miniLabel}>
+                        <Text style={styles.miniLabelText} numberOfLines={1}>
+                          {isMutedUser(tileUserId(t)) ? '🔇 ' : ''}{tileLabel(t)}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                  {avatarUsers.map((uid) => {
+                    const info = roster[uid];
+                    const name = nameFor(uid);
+                    return (
+                      <View key={`av-${uid}`} style={[styles.miniTile, styles.avatarTile]}>
+                        {info?.avatarUrl ? (
+                          <Image source={{ uri: info.avatarUrl }} style={styles.avatarMini} />
+                        ) : (
+                          <View style={styles.avatarMini}>
+                            <Text style={styles.avatarMiniTxt}>{(name[0] || '?').toUpperCase()}</Text>
+                          </View>
+                        )}
+                        <View style={styles.miniLabel}>
+                          <Text style={styles.miniLabelText} numberOfLines={1}>
+                            {isMutedUser(uid) ? '🔇 ' : ''}{name}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Popups open just below the toolbar and stay inside the screen. */}
+            {showReactBar && (
+              <View style={styles.reactPop}>
+                {REACTIONS.map((emoji) => (
+                  <TouchableOpacity
+                    key={emoji}
+                    onPress={() => { sendReaction(emoji); setShowReactBar(false); }}
+                    style={styles.reactionBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.reactionEmoji}>{emoji}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {showMenu && (
+              <View style={styles.menuPop}>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => { setShowMenu(false); openPanel('audio'); refreshAudioDevices(); }}
+                  activeOpacity={0.7}
+                >
+                  <LiveIcon name="headset" size={20} color={Colors.text} />
+                  <Text style={styles.menuText}>Audio output</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); openPanel('bg'); }} activeOpacity={0.7}>
+                  <LiveIcon name="background" size={20} color={Colors.text} />
+                  <Text style={styles.menuText}>Background effects</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ) : (
         <ScrollView contentContainerStyle={styles.tileGrid}>
           {sortedTiles.map((t) => (
-            <View key={t.tileId} style={[styles.tile, t.isScreenShare && styles.tileWide]}>
-              <ExpoAWSChimeView tileId={t.tileId} isLocal={t.isLocal} style={styles.tileVideo} />
+            <View key={t.tileId} style={styles.tile}>
+              {videosReady
+                ? <ExpoAWSChimeView tileId={t.tileId} isLocal={t.isLocal} style={styles.tileVideo} />
+                : renderTileHold(t, false)}
               <View style={styles.tileLabelWrap}>
                 <Text style={styles.tileLabelText} numberOfLines={1}>
-                  {!t.isScreenShare && isMutedUser(tileUserId(t)) ? '🔇 ' : ''}{tileLabel(t)}
+                  {isMutedUser(tileUserId(t)) ? '🔇 ' : ''}{tileLabel(t)}
                 </Text>
               </View>
             </View>
@@ -1090,6 +1400,7 @@ export default function LiveRoomScreen() {
             );
           })}
         </ScrollView>
+        )}
 
         {/* Floating reactions */}
         <View pointerEvents="none" style={styles.reactionFloatLayer}>
@@ -1107,6 +1418,7 @@ export default function LiveRoomScreen() {
       </View>
 
       {/* Reaction bar */}
+      {!controlsHidden && (
       <View style={styles.reactionBar}>
         {REACTIONS.map((emoji) => (
           <TouchableOpacity key={emoji} onPress={() => sendReaction(emoji)} style={styles.reactionBtn} activeOpacity={0.7}>
@@ -1114,8 +1426,10 @@ export default function LiveRoomScreen() {
           </TouchableOpacity>
         ))}
       </View>
+      )}
 
       {/* Control dock: mic, camera, chat */}
+      {!controlsHidden && (
       <View style={styles.dock}>
         <TouchableOpacity
           style={[styles.dockBtn, micMuted && styles.dockBtnOff, micLocked && styles.dockBtnLocked]}
@@ -1162,6 +1476,7 @@ export default function LiveRoomScreen() {
           <Text style={styles.dockLabel}>Background</Text>
         </TouchableOpacity>
       </View>
+      )}
 
       {/* People panel */}
       {showPeople && (
@@ -1285,45 +1600,53 @@ export default function LiveRoomScreen() {
           <ScrollView
             ref={chatScrollRef}
             style={styles.panelBody}
+            contentContainerStyle={styles.chatContent}
             onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
+            onScrollBeginDrag={() => setPickerFor(null)}
+            keyboardShouldPersistTaps="handled"
           >
             {messages.length === 0 ? (
               <Text style={styles.panelEmpty}>No messages yet. Say hello! 👋</Text>
             ) : (
-              messages.map((m) => {
+              messages.map((m, idx) => {
                 const mine = m.senderId === myUserId;
                 const isTeacher = m.senderRole === 'teacher';
                 const agg = reactions[m.id];
                 const emojis = agg ? Object.keys(agg.counts).filter((e) => agg.counts[e] > 0) : [];
+                // Group consecutive messages from one sender (name shown once, tighter gap).
+                const prev = idx > 0 ? messages[idx - 1] : null;
+                const grouped = !!prev && prev.senderId === m.senderId;
+                const time = formatClock(m.createdAt);
                 return (
-                  <View key={m.id} style={[styles.msgWrap, mine && styles.msgWrapMine]}>
-                    <View style={[styles.msgRow, mine && styles.msgRowMine]}>
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        // Tap (or long-press) a message to react — WhatsApp-style.
-                        onPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
-                        onLongPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
-                        delayLongPress={250}
-                        style={[styles.msg, mine && styles.msgMine]}
-                      >
-                        <Text style={styles.msgWho}>
-                          {mine ? 'You' : (m.senderName || 'User')}{isTeacher ? ' · Teacher' : ''}
+                  <View
+                    key={m.id}
+                    style={[styles.msgWrap, mine && styles.msgWrapMine, grouped && styles.msgWrapGrouped]}
+                  >
+                    {/* Long-press a message -> emoji bar pops up above it (WhatsApp-style). */}
+                    {pickerFor === m.id && (
+                      <ReactionPicker
+                        mine={agg?.mine || {}}
+                        alignRight={mine}
+                        onPick={(e) => toggleMsgReaction(m.id, e)}
+                      />
+                    )}
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onLongPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
+                      onPress={() => { if (pickerFor) setPickerFor(null); }}
+                      delayLongPress={220}
+                      style={[styles.msg, mine && styles.msgMine, pickerFor === m.id && styles.msgSelected]}
+                    >
+                      {!mine && !grouped && (
+                        <Text style={[styles.msgWho, isTeacher && styles.msgWhoTeacher]}>
+                          {m.senderName || 'User'}{isTeacher ? ' · Teacher' : ''}
                         </Text>
-                        <Text style={styles.msgText}>{m.message}</Text>
-                      </TouchableOpacity>
-                      {/* Visible react button (same as desktop's react icon) */}
-                      <TouchableOpacity
-                        onPress={() => setPickerFor((cur) => (cur === m.id ? null : m.id))}
-                        style={[styles.reactBtn, pickerFor === m.id && styles.reactBtnActive]}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="React to message"
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.reactBtnText}>😊</Text>
-                      </TouchableOpacity>
-                    </View>
+                      )}
+                      <Text style={styles.msgText}>{m.message}</Text>
+                      {!!time && <Text style={styles.msgTime}>{time}</Text>}
+                    </TouchableOpacity>
                     {emojis.length > 0 && (
-                      <View style={styles.badgeRow}>
+                      <View style={[styles.badgeRow, mine && styles.badgeRowMine]}>
                         {emojis.map((e) => (
                           <TouchableOpacity
                             key={e}
@@ -1332,15 +1655,6 @@ export default function LiveRoomScreen() {
                             activeOpacity={0.7}
                           >
                             <Text style={styles.badgeText}>{e} {agg!.counts[e]}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-                    {pickerFor === m.id && (
-                      <View style={styles.picker}>
-                        {REACTIONS.map((e) => (
-                          <TouchableOpacity key={e} onPress={() => toggleMsgReaction(m.id, e)} style={styles.pickerBtn}>
-                            <Text style={styles.pickerEmoji}>{e}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
@@ -1442,7 +1756,58 @@ const styles = StyleSheet.create({
   stage: { flex: 1, position: 'relative' },
   tileGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 6, gap: 6 },
   tile: { width: '48.5%', aspectRatio: 3 / 4, backgroundColor: '#111', borderRadius: 12, overflow: 'hidden' },
-  tileWide: { width: '100%', aspectRatio: 16 / 9 },
+  // Screen-share layout: shared screen fills the stage, people float below it.
+  shareStage: { flex: 1, backgroundColor: '#000' },
+  shareVideoWrap: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  fullBtn: {
+    position: 'absolute', right: 10, bottom: 10, width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+  },
+  strip: { paddingVertical: 6, backgroundColor: '#000' },
+  stripContent: { paddingHorizontal: 8, gap: 6 },
+  // Horizontal call toolbar (screen-share layout): 6 equal slots, always fits.
+  shareBar: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 4, paddingVertical: 5,
+    backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  shareBarItem: { flex: 1, minWidth: 0, alignItems: 'center', gap: 2 },
+  shareBarCircle: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  shareBarCircleOff: { backgroundColor: '#DC2626' },
+  shareBarCircleOn: { backgroundColor: Colors.primary },
+  shareBarLabel: { color: Colors.text, fontSize: 9, fontWeight: '600' },
+  reactPop: {
+    position: 'absolute', top: 62, left: 8, right: 8, zIndex: 5,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly',
+    backgroundColor: 'rgba(20,18,31,0.97)', borderRadius: 28, paddingVertical: 2,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', elevation: 6,
+  },
+  menuPop: {
+    position: 'absolute', top: 62, right: 8, minWidth: 200, paddingVertical: 4, zIndex: 5,
+    backgroundColor: 'rgba(20,18,31,0.98)', borderRadius: 12,
+    borderWidth: 1, borderColor: 'rgba(168,85,247,0.35)', elevation: 6,
+  },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  menuText: { color: Colors.text, fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  miniTile: {
+    width: 64, height: 86, borderRadius: 10, overflow: 'hidden',
+    backgroundColor: 'rgba(17,17,17,0.85)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  miniLabel: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', paddingVertical: 1, paddingHorizontal: 4 },
+  miniLabelText: { color: '#fff', fontSize: 9, fontWeight: '600' },
+  avatarMini: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center' },
+  avatarMiniTxt: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  layoutBtns: { position: 'absolute', top: 8, right: 8, gap: 8 },
+  layoutBtn: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+  },
+  layoutBtnOn: { backgroundColor: 'rgba(124,58,237,0.75)' },
+  layoutBtnText: { fontSize: 16, color: '#fff' },
   avatarTile: { alignItems: 'center', justifyContent: 'center' },
   avatarBig: { width: 72, height: 72, borderRadius: 36, backgroundColor: Colors.card2, alignItems: 'center', justifyContent: 'center' },
   avatarBigTxt: { color: '#fff', fontSize: 28, fontWeight: '700' },
@@ -1468,12 +1833,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10, backgroundColor: Colors.bg, borderTopWidth: 1, borderTopColor: Colors.border,
   },
   // 5 buttons: equal width so they fit on narrow phones too.
-  dockBtn: { flex: 1, marginHorizontal: 3, alignItems: 'center', gap: 3, paddingVertical: 6, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' },
+  dockBtn: { flex: 1, minWidth: 0, marginHorizontal: 2, alignItems: 'center', gap: 3, paddingVertical: 6, paddingHorizontal: 2, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' },
   dockBtnOff: { backgroundColor: 'rgba(239,68,68,0.15)' },
   dockBtnOn: { backgroundColor: 'rgba(124,58,237,0.25)' },
   dockBtnLocked: { opacity: 0.5 },
   dockIcon: { fontSize: 20 },
-  dockLabel: { color: Colors.text, fontSize: 10, fontWeight: '600' },
+  dockLabel: { color: Colors.text, fontSize: 9, fontWeight: '600' },
 
   // Slide-up panels (people / chat / audio / background)
   panel: {
@@ -1510,28 +1875,39 @@ const styles = StyleSheet.create({
   personName: { color: Colors.text, fontSize: 14, flex: 1 },
   personMedia: { color: Colors.muted, fontSize: 13 },
 
-  msgWrap: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '90%' },
+  // Chat bubbles: explicit line heights + roomy padding so text (and emoji,
+  // which are taller than letters) never touch the bubble's top/bottom edge.
+  chatContent: { paddingTop: 6, paddingBottom: 14 },
+  msgWrap: { marginBottom: 10, alignSelf: 'flex-start', maxWidth: '82%' },
   msgWrapMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  msgRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  // Own messages: react button on the left of the bubble.
-  msgRowMine: { flexDirection: 'row-reverse' },
-  reactBtn: {
-    width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+  msgWrapGrouped: { marginTop: -6 },
+  msg: {
+    backgroundColor: Colors.card2, borderRadius: 14, borderTopLeftRadius: 4,
+    paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, flexShrink: 1,
   },
-  reactBtnActive: { backgroundColor: 'rgba(124,58,237,0.35)' },
-  reactBtnText: { fontSize: 15 },
-  msg: { backgroundColor: Colors.card2, borderRadius: 10, padding: 8, flexShrink: 1 },
-  msgMine: { backgroundColor: 'rgba(124,58,237,0.25)' },
-  msgWho: { color: Colors.muted, fontSize: 11, fontWeight: '600', marginBottom: 2 },
-  msgText: { color: Colors.text, fontSize: 14 },
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
-  badge: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
-  badgeMine: { backgroundColor: 'rgba(124,58,237,0.35)' },
-  badgeText: { color: Colors.text, fontSize: 12 },
-  picker: { flexDirection: 'row', gap: 4, marginTop: 4, backgroundColor: '#1f1b2e', borderRadius: 14, padding: 4, alignSelf: 'flex-start' },
-  pickerBtn: { padding: 4 },
-  pickerEmoji: { fontSize: 22 },
+  msgMine: { backgroundColor: 'rgba(124,58,237,0.35)', borderTopLeftRadius: 14, borderTopRightRadius: 4 },
+  msgSelected: { borderWidth: 1, borderColor: 'rgba(196,181,253,0.7)' },
+  msgWho: { color: Colors.muted, fontSize: 12, lineHeight: 16, fontWeight: '700', marginBottom: 3 },
+  msgWhoTeacher: { color: '#FBBF24' },
+  msgText: { color: Colors.text, fontSize: 15, lineHeight: 21 },
+  msgTime: { color: 'rgba(255,255,255,0.45)', fontSize: 10, lineHeight: 14, alignSelf: 'flex-end', marginTop: 3 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: -4 },
+  badgeRowMine: { justifyContent: 'flex-end' },
+  badge: {
+    backgroundColor: '#2a2540', borderRadius: 12, paddingVertical: 3, paddingHorizontal: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  badgeMine: { backgroundColor: 'rgba(124,58,237,0.5)', borderColor: 'rgba(196,181,253,0.6)' },
+  badgeText: { color: Colors.text, fontSize: 12, lineHeight: 16 },
+  picker: {
+    flexDirection: 'row', gap: 2, marginBottom: 6, backgroundColor: '#241f38', borderRadius: 26,
+    paddingHorizontal: 6, paddingVertical: 4,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    elevation: 6, shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+  },
+  pickerBtn: { paddingHorizontal: 6, paddingVertical: 4, borderRadius: 20 },
+  pickerBtnMine: { backgroundColor: 'rgba(124,58,237,0.45)' },
+  pickerEmoji: { fontSize: 26, lineHeight: 34 },
   chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: '#14121f' },
   chatInput: { flex: 1, minHeight: 44, backgroundColor: Colors.card2, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: Colors.text, fontSize: 15 },
   chatInputLocked: { opacity: 0.5 },

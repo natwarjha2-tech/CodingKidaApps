@@ -12,6 +12,7 @@ import { userScopedKey } from '@/services/storage.service';
 import { VideoPlayer } from '@/components/lesson/VideoPlayer';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
 import { CoinsModal } from '@/components/common/CoinsModal';
+import { LiveIcon } from '@/components/live/LiveIcons';
 import { CoinRewardToast } from '@/components/common/CoinRewardToast';
 import { CodoHelpButton, CodoAnswerCard } from '@/components/lesson/CodoHelp';
 import { CodoPromptModal } from '@/components/lesson/CodoPromptModal';
@@ -1353,34 +1354,73 @@ export default function LessonScreen() {
           // flight (hlsAuthResolved=false means we're deliberately holding the
           // source to avoid the wasted MP4 load).
           loading={!playData || !hlsAuthResolved}
+          // Pause while the full-screen quiz is open; resumes when it closes.
+          paused={quizExpanded}
+          // One row under the video: likes / views | Quality | save / download / coins.
+          leading={(
+            <>
+              {/* Like | Dislike in one pill (YouTube style) + views */}
+              <View style={styles.likePill}>
+                <TouchableOpacity
+                  style={styles.likeHalf}
+                  onPress={() => handleReact('like')}
+                  accessibilityLabel={`Like, ${likes}`}
+                  hitSlop={4}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.likeIcon, userReaction === 'like' && styles.likeIconOn]}>👍</Text>
+                  <Text style={[styles.likeCount, userReaction === 'like' && { color: Colors.success }]}>{likes}</Text>
+                </TouchableOpacity>
+                <View style={styles.likeDivider} />
+                <TouchableOpacity
+                  style={styles.likeHalf}
+                  onPress={() => handleReact('dislike')}
+                  accessibilityLabel={`Dislike, ${dislikes}`}
+                  hitSlop={4}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.likeIcon, userReaction === 'dislike' && styles.likeIconOn]}>👎</Text>
+                  {dislikes > 0 && (
+                    <Text style={[styles.likeCount, userReaction === 'dislike' && { color: Colors.danger }]}>{dislikes}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <View style={styles.viewsChip}>
+                <Text style={styles.viewsIcon}>👁️</Text>
+                <Text style={styles.viewsText}>{views}</Text>
+              </View>
+            </>
+          )}
+          trailing={(
+            <>
+              <TouchableOpacity style={styles.actionBtn} onPress={saveToWatchlist} hitSlop={6}>
+                <LiveIcon
+                  name={savedToWatchlist ? 'bookmarkFilled' : 'bookmark'}
+                  size={20}
+                  color={savedToWatchlist ? Colors.primary : '#fff'}
+                />
+                <Text style={[styles.actionLabel, savedToWatchlist && { color: Colors.primary }]}>
+                  {savedToWatchlist ? 'Saved' : 'Save'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtn} onPress={downloadVideo} hitSlop={6}>
+                <LiveIcon
+                  name={videoDownloaded ? 'downloadDone' : 'download'}
+                  size={20}
+                  color={videoDownloaded ? Colors.success : '#fff'}
+                />
+                <Text style={[styles.actionLabel, videoDownloaded && { color: Colors.success }]}>
+                  {videoDownloaded ? 'Offline' : 'Download'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => setCoinsModalVisible(true)} hitSlop={6}>
+                <Text style={styles.actionIcon}>🪙</Text>
+                <Text style={styles.actionLabel}>{totalCoins}</Text>
+              </TouchableOpacity>
+            </>
+          )}
         />
       )}
-
-      {/* Engagement bar: like / dislike / views (mirrors desktop) */}
-      {!keyboardVisible && (playVideoUrl || activeLesson?.videoUrl) ? (
-        <View style={styles.engagementBar}>
-          <TouchableOpacity
-            style={[styles.engBtn, userReaction === 'like' && styles.engBtnLike]}
-            onPress={() => handleReact('like')}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.engIcon, userReaction === 'like' && { color: Colors.success }]}>👍</Text>
-            <Text style={[styles.engCount, userReaction === 'like' && { color: Colors.success }]}>{likes}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.engBtn, userReaction === 'dislike' && styles.engBtnDislike]}
-            onPress={() => handleReact('dislike')}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.engIcon, userReaction === 'dislike' && { color: Colors.danger }]}>👎</Text>
-            <Text style={[styles.engCount, userReaction === 'dislike' && { color: Colors.danger }]}>{dislikes}</Text>
-          </TouchableOpacity>
-          <View style={styles.engViews}>
-            <Text style={styles.engIcon}>👁️</Text>
-            <Text style={styles.engCount}>{views} views</Text>
-          </View>
-        </View>
-      ) : null}
 
       {/* Next Lesson button — continuous across modules (mirrors desktop). Only
           shown AFTER the video has finished (lessonCompleted) and when there is a
@@ -1394,28 +1434,6 @@ export default function LessonScreen() {
           <Text style={styles.nextBtnArrow}>Next ▶</Text>
         </TouchableOpacity>
       ) : null}
-
-      {/* Action Toolbar — hidden when keyboard open */}
-      {!keyboardVisible && (
-        <View style={styles.actionBar}>
-        <TouchableOpacity style={styles.actionBtn} onPress={saveToWatchlist}>
-          <Text style={styles.actionIcon}>{savedToWatchlist ? '✅' : '📌'}</Text>
-          <Text style={[styles.actionLabel, savedToWatchlist && { color: Colors.success }]}>
-            {savedToWatchlist ? 'Saved' : 'Save'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={downloadVideo}>
-          <Text style={styles.actionIcon}>{videoDownloaded ? '✅' : '⬇️'}</Text>
-          <Text style={[styles.actionLabel, videoDownloaded && { color: Colors.success }]}>
-            {videoDownloaded ? 'Downloaded' : 'Download'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => setCoinsModalVisible(true)}>
-          <Text style={styles.actionIcon}>🪙</Text>
-          <Text style={styles.actionLabel}>{totalCoins}</Text>
-        </TouchableOpacity>
-      </View>
-      )}
 
       {/* Tabs — single horizontal line, equal gap, no wrap (each tab sizes to
           its label; scrolls horizontally if they don't all fit the screen). */}
@@ -1941,9 +1959,22 @@ const styles = StyleSheet.create({
     paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border,
     backgroundColor: Colors.bg,
   },
-  actionBtn: { alignItems: 'center', gap: 4 },
-  actionIcon: { fontSize: 18 },
-  actionLabel: { color: Colors.muted, fontSize: 10, fontWeight: '600' },
+  // One row under the video: [👍 n | 👎] 👁 n ...... Save  Download  Coins
+  likePill: {
+    flexDirection: 'row', alignItems: 'center', borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  likeHalf: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 9, paddingVertical: 5 },
+  likeDivider: { width: 1, height: 16, backgroundColor: 'rgba(255,255,255,0.2)' },
+  likeIcon: { fontSize: 14, opacity: 0.75 },
+  likeIconOn: { opacity: 1 },
+  likeCount: { color: Colors.text, fontSize: 12, fontWeight: '700' },
+  viewsChip: { flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 4 },
+  viewsIcon: { fontSize: 12 },
+  viewsText: { color: Colors.muted, fontSize: 11, fontWeight: '600' },
+  actionBtn: { alignItems: 'center', gap: 1, minWidth: 44, paddingHorizontal: 1 },
+  actionIcon: { fontSize: 16 },
+  actionLabel: { color: Colors.muted, fontSize: 9, fontWeight: '600' },
 
   // Engagement bar (like / dislike / views)
   engagementBar: {

@@ -70,6 +70,12 @@ export type ChimeEventMap = {
     isLocal: boolean;
     isScreenShare: boolean;
   };
+  onVideoTileSizeChanged: {
+    tileId: number;
+    isScreenShare: boolean;
+    videoStreamContentHeight: number;
+    videoStreamContentWidth: number;
+  };
   onDataMessage: {
     topic: string;
     text: string;

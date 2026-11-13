@@ -115,13 +115,44 @@ export interface LiveRecording {
   [key: string]: unknown;
 }
 
+/** HLS state of a recording (server converts Chime chunks → HLS after a class). */
+export type RecordingHlsStatus = 'ready' | 'processing' | 'failed' | 'pending';
+
 /** Student "My recordings" tree: course → classes → recordings. */
 export interface MyRecordingClass {
   classId?: string;
   title: string;
   endedAt?: string | null;
-  recordings: { url: string | null; duration?: number | null; [key: string]: unknown }[];
+  recordings: {
+    id?: string;
+    liveClassId?: string;
+    url: string | null;
+    duration?: number | null;
+    hlsStatus?: RecordingHlsStatus;
+    [key: string]: unknown;
+  }[];
   [key: string]: unknown;
+}
+
+/** HLS playback auth for a recording (CloudFront signed cookies, like lessons). */
+export interface RecordingHlsAuth {
+  success: boolean;
+  hlsReady: boolean;
+  hlsStatus: RecordingHlsStatus;
+  masterUrl: string | null;
+  cookies: {
+    'CloudFront-Policy': string;
+    'CloudFront-Signature': string;
+    'CloudFront-Key-Pair-Id': string;
+  } | null;
+  expiresIn: number;
+  message?: string;
+}
+/** Chat/reactions replay synced to recording time. */
+export interface RecordingReplay {
+  success: boolean;
+  chat: { id: string; senderName: string; senderRole: string; message: string; offsetSec: number }[];
+  reactions: { emoji: string; offsetSec: number }[];
 }
 export interface MyRecordingCourse {
   courseId?: string;
@@ -253,6 +284,23 @@ export const liveApi = {
         {}
       )
       .then((r) => r.data),
+
+  /** HLS master URL + CloudFront cookies to stream one recording. */
+  getRecordingHlsAuth: (classId: string, recordingId: string) =>
+    apiClient
+      .get<RecordingHlsAuth>(
+        `/api/live/classes/${encodeURIComponent(classId)}/recordings/${encodeURIComponent(recordingId)}/hls-auth`
+      )
+      .then((r) => r.data),
+
+  /** Chat + floating reactions of a recording, each with `offsetSec` into the video. */
+  getRecordingReplay: (classId: string, recordingId: string) =>
+    apiClient
+      .get<RecordingReplay>(
+        `/api/live/classes/${encodeURIComponent(classId)}/recordings/${encodeURIComponent(recordingId)}/replay`
+      )
+      .then((r) => r.data)
+      .catch(() => ({ success: false as const, chat: [], reactions: [] } as RecordingReplay)),
 
   /** Student: recordings of past classes across enrolled courses. */
   getMyRecordings: () =>

@@ -77,6 +77,17 @@ export interface Exercise {
   starterCode?: string;
   hints?: string[];
   order: number;
+  // Coding exercises (type === 'coding') open the code editor (desktop parity).
+  // All of these come from GET /api/exercise.
+  type?: string | null;
+  language?: string | null; // 'java' | 'c' | 'python' | 'javascript' — locks the editor
+  inputFormat?: string | null;
+  outputFormat?: string | null;
+  constraints?: string | null;
+  explanation?: string | null;
+  tags?: string[] | null;
+  timeComplexity?: string | null;
+  spaceComplexity?: string | null;
 }
 
 export interface Homework {

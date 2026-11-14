@@ -1511,7 +1511,43 @@ export default function LessonScreen() {
         {activeTab === 'exercise' && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>💻 Practice Exercise</Text>
-            {exercises.length > 0 ? exercises.map((ex) => (
+            {exercises.length > 0 ? exercises.map((ex, exIndex) => ex.type === 'coding' ? (
+              // Coding exercise → opens the full Code Editor (desktop parity:
+              // "Practice in Code Editor →" + the same editor features).
+              <View key={ex.id} style={styles.exerciseBlock}>
+                {exercises.length > 1 && (
+                  <Text style={styles.exCounter}>EXERCISE {exIndex + 1} OF {exercises.length}</Text>
+                )}
+                <View style={styles.codingTitleRow}>
+                  <Text style={[styles.question, { flex: 1, marginBottom: 0 }]}>{ex.title || 'Coding Exercise'}</Text>
+                  {(() => {
+                    const d = (ex.difficulty || 'medium').toLowerCase();
+                    const c = d === 'easy' ? '#22c55e' : d === 'hard' ? '#ef4444' : '#f59e0b';
+                    return (
+                      <View style={[styles.codingDiff, { backgroundColor: c + '20', borderColor: c + '40' }]}>
+                        <Text style={[styles.codingDiffText, { color: c }]}>{d}</Text>
+                      </View>
+                    );
+                  })()}
+                </View>
+                <Text style={styles.codingDesc}>{ex.description}</Text>
+                {!!ex.hints?.length && (
+                  <View style={styles.codingHint}>
+                    <Text style={styles.codingHintText}>💡 {ex.hints.join(' | ')}</Text>
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.codingOpenBtn}
+                  activeOpacity={0.85}
+                  onPress={() => router.push({
+                    pathname: '/coding/[exerciseId]',
+                    params: { exerciseId: ex.id, lessonId, courseId },
+                  } as any)}
+                >
+                  <Text style={styles.codingOpenText}>💻 Practice in Code Editor →</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
               <View key={ex.id} style={styles.exerciseBlock}>
                 <Text style={styles.question}>{ex.description}</Text>
                 <TextInput
@@ -1954,6 +1990,16 @@ const styles = StyleSheet.create({
   },
   backText: { color: Colors.primary, fontSize: 20, fontWeight: FontWeight.semibold },
   lessonTitle: { flex: 1, color: Colors.white, fontSize: Typography.base, fontWeight: FontWeight.bold },
+  // Coding exercise card (opens the Code Editor screen)
+  exCounter: { color: Colors.purple, fontSize: 11, fontWeight: '800', letterSpacing: 0.5, marginBottom: 8 },
+  codingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  codingDiff: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  codingDiffText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
+  codingDesc: { color: Colors.text, fontSize: 14, lineHeight: 21, marginBottom: 10 },
+  codingHint: { backgroundColor: 'rgba(245,158,11,0.08)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)', borderRadius: 10, padding: 10, marginBottom: 10 },
+  codingHintText: { color: '#fcd34d', fontSize: 13, lineHeight: 19 },
+  codingOpenBtn: { backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  codingOpenText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   actionBar: {
     flexDirection: 'row', justifyContent: 'space-around',
     paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border,

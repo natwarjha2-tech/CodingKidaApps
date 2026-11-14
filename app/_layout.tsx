@@ -239,6 +239,10 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="course/[id]" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="lesson/[id]" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="coding/[exerciseId]" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="final-test/[courseId]" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="code-editor/index" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="code-editor/[problemId]" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="enrolled-courses" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="completed-videos" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="achievements" options={{ animation: 'slide_from_right' }} />

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -9,6 +9,12 @@ interface PdfViewerProps {
   visible: boolean;
   pdfUrl: string;
   onClose: () => void;
+  /** Optional action bar under the document (e.g. certificate Download / Share). */
+  footer?: ReactNode;
+  /** Header title (default "📄 Document"). */
+  title?: string;
+  /** Allow screenshots (default false — protected lesson PDFs). */
+  allowCapture?: boolean;
 }
 
 /**
@@ -18,7 +24,7 @@ interface PdfViewerProps {
  * - No save, download, copy, share options
  * - Works on Android + iOS
  */
-export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
+export function PdfViewer({ visible, pdfUrl, onClose, footer, title, allowCapture }: PdfViewerProps) {
   const [loading, setLoading] = useState(true);
   const [viewerContent, setViewerContent] = useState<{ type: 'url' | 'html'; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +39,7 @@ export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
   // module isn't linked yet won't crash the whole screen — the protection is
   // simply skipped until the app is rebuilt with the native module included.
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || allowCapture) return;
     let ScreenCapture: typeof import('expo-screen-capture') | null = null;
     try {
       ScreenCapture = require('expo-screen-capture');
@@ -44,7 +50,7 @@ export function PdfViewer({ visible, pdfUrl, onClose }: PdfViewerProps) {
     return () => {
       ScreenCapture?.allowScreenCaptureAsync?.().catch(() => {});
     };
-  }, [visible]);
+  }, [visible, allowCapture]);
 
   const handleOpen = async () => {
     if (!pdfUrl) return;
@@ -184,7 +190,7 @@ window.__renderPdf = function() {
           <TouchableOpacity onPress={() => { onClose(); setViewerContent(null); setError(null); localB64Ref.current = null; }}>
             <Text style={styles.closeBtn}>✕ Close</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>📄 Document</Text>
+          <Text style={styles.headerTitle}>{title || '📄 Document'}</Text>
           <View style={{ width: 60 }} />
         </View>
 
@@ -234,6 +240,7 @@ window.__renderPdf = function() {
             }}
           />
         ) : null}
+        {footer}
       </View>
     </Modal>
   );

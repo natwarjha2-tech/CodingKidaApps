@@ -4,6 +4,13 @@ import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DownloadService } from '@/services';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
+import { useAuthStore } from '@/store';
+import { CertificateViewer } from '@/components/finalTest/CertificateViewer';
+import {
+  listDownloadedCertificates, removeDownloadedCertificate, certificateDisplayName, fillMissingCertificateTitles,
+  type DownloadedCertificate,
+} from '@/components/finalTest/certificateStore';
+import { finalTestApi } from '@/api';
 import type { DownloadItem } from '@/services';
 import { Colors } from '@/theme';
 
@@ -13,6 +20,9 @@ export default function DownloadsScreen() {
   const [totalItems, setTotalItems] = useState(0);
   const [pdfViewerVisible, setPdfViewerVisible] = useState(false);
   const [activePdfUri, setActivePdfUri] = useState('');
+  const userId = useAuthStore((s) => s.user?.id);
+  const [certs, setCerts] = useState<DownloadedCertificate[]>([]);
+  const [openCert, setOpenCert] = useState<DownloadedCertificate | null>(null);
 
   const loadDownloads = useCallback(async () => {
     setIsLoading(true);
@@ -21,16 +31,35 @@ export default function DownloadsScreen() {
       const data = await DownloadService.getOrganized();
       setOrganized(data);
       const all = await DownloadService.getAll();
-      setTotalItems(all.length);
+      let certList = await listDownloadedCertificates(userId);
+      // Older saves may lack the course name — fetch it once and fix the list.
+      if (certList.some((c) => !c.courseTitle)) {
+        try {
+          const r = await finalTestApi.myCertificates();
+          if (await fillMissingCertificateTitles(userId, r.certificates ?? [])) certList = await listDownloadedCertificates(userId);
+        } catch { /* offline — names fill in next time */ }
+      }
+      setCerts(certList);
+      setTotalItems(all.length + certList.length);
       DownloadService.notifyExpiringSoon(); // fire & forget — warn about soon-to-expire downloads
     } catch {
       setOrganized({});
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useFocusEffect(useCallback(() => { loadDownloads(); }, [loadDownloads]));
+
+  const removeCert = (c: DownloadedCertificate) => {
+    Alert.alert('Remove certificate', `Remove "${certificateDisplayName(c.code, c.courseTitle)}" from Downloads?\n\nYour certificate is not deleted — you can download it again any time.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        await removeDownloadedCertificate(userId, c.code);
+        loadDownloads();
+      }},
+    ]);
+  };
 
   const handleRemove = (item: DownloadItem) => {
     Alert.alert('Remove Download', `Remove "${item.lessonTitle}" (${item.type})?`, [
@@ -72,7 +101,7 @@ export default function DownloadsScreen() {
             <ActivityIndicator color={Colors.primary} size="large" />
             <Text style={styles.loadingText}>Loading downloads...</Text>
           </View>
-        ) : courseIds.length === 0 ? (
+        ) : courseIds.length === 0 && certs.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>📥</Text>
             <Text style={styles.emptyTitle}>No downloads yet</Text>
@@ -82,7 +111,43 @@ export default function DownloadsScreen() {
             </Text>
           </View>
         ) : (
-          courseIds.map((courseId) => {
+          <>
+          {certs.length > 0 && (
+            <View style={styles.courseSection}>
+              <View style={styles.courseHeader}>
+                <Text style={styles.courseIcon}>🎓</Text>
+                <Text style={styles.courseTitle}>Certificates</Text>
+              </View>
+              <View style={styles.moduleSection}>
+                {certs.map((c) => (
+                  <View key={c.code} style={styles.itemCard}>
+                    <TouchableOpacity style={styles.itemLeft} onPress={() => setOpenCert(c)}>
+                      <View style={[styles.itemIcon, { backgroundColor: 'rgba(251,191,36,0.15)' }]}>
+                        <Text style={styles.itemIconText}>🏆</Text>
+                      </View>
+                      <View style={styles.itemInfo}>
+                        <Text style={styles.itemTitle} numberOfLines={2}>{certificateDisplayName(c.code, c.courseTitle)}</Text>
+                        <View style={styles.itemMeta}>
+                          <Text style={styles.itemType}>Certificate</Text>
+                          {typeof c.percent === 'number' ? <Text style={styles.itemQuality}>{c.percent}%</Text> : null}
+                          <Text style={styles.itemSize}>{c.code}</Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                    <View style={styles.itemActions}>
+                      <TouchableOpacity style={styles.playBtn} onPress={() => setOpenCert(c)}>
+                        <Text style={styles.playBtnText}>📖</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.removeBtn} onPress={() => removeCert(c)}>
+                        <Text style={styles.removeBtnText}>🗑️</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+          {courseIds.map((courseId) => {
             const course = organized[courseId];
             const moduleKeys = Object.keys(course.modules);
 
@@ -157,11 +222,19 @@ export default function DownloadsScreen() {
                 })}
               </View>
             );
-          })
+          })}
+          </>
         )}
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      <CertificateViewer
+        code={openCert?.code ?? null}
+        visible={!!openCert}
+        onClose={() => setOpenCert(null)}
+        info={{ courseTitle: openCert?.courseTitle, percent: openCert?.percent }}
+      />
 
       {/* PDF Viewer for offline PDFs */}
       <PdfViewer

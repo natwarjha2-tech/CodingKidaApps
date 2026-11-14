@@ -2,7 +2,10 @@ import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { useCourseDetail, useCourses } from '@/hooks';
+import { finalTestApi } from '@/api';
+import { CertificateViewer } from '@/components/finalTest/CertificateViewer';
 import { useCourseStore } from '@/store';
 import { DownloadService } from '@/services';
 import { PdfViewer } from '@/components/lesson/PdfViewer';
@@ -35,6 +38,17 @@ export default function CourseDetailScreen() {
   // Per-material download status: materialId -> remaining days (>=0 downloaded, undefined = not downloaded)
   const [downloadedMap, setDownloadedMap] = useState<Record<string, number>>({});
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  // Final course test card (after the last module). Refetched when returning
+  // to this screen so it reflects a just-finished attempt / certificate.
+  const { data: finalTest, refetch: refetchFinalTest } = useQuery({
+    queryKey: ['final-test', id],
+    queryFn: () => finalTestApi.status(String(id)),
+    enabled: !!id && !!data?.course?.isEnrolled,
+    staleTime: 30 * 1000,
+  });
+  useFocusEffect(useCallback(() => { if (data?.course?.isEnrolled) refetchFinalTest(); }, [data?.course?.isEnrolled, refetchFinalTest]));
+  const [certCode, setCertCode] = useState<string | null>(null);
 
   const course = data?.course;
   // Completed lessons for this course (backend returns the IDs). Used to mark
@@ -274,8 +288,59 @@ export default function CourseDetailScreen() {
           </View>
         ))}
 
+        {/* Final course test + certificate — after the last module */}
+        {finalTest?.available && (
+          <View style={styles.finalCard}>
+            <View style={styles.finalHead}>
+              <Text style={styles.finalIcon}>🎓</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.finalLabel}>FINAL TEST</Text>
+                <Text style={styles.finalTitle}>Course Certificate Test</Text>
+              </View>
+              {finalTest.certificate ? (
+                <Text style={[styles.finalBadge, styles.finalBadgeOk]}>Passed</Text>
+              ) : !finalTest.unlocked ? (
+                <Text style={styles.finalBadge}>🔒 Locked</Text>
+              ) : null}
+            </View>
+            <Text style={styles.finalMeta}>
+              {finalTest.totalQuestions} MCQs · {finalTest.timeLimitMin} min · pass {finalTest.passPercent}%
+              {finalTest.bestPercent !== null ? ` · best ${finalTest.bestPercent}%` : ''}
+            </Text>
+
+            {finalTest.certificate ? (
+              <View style={styles.finalBtns}>
+                <TouchableOpacity style={styles.finalBtn} onPress={() => setCertCode(finalTest.certificate!.code)}>
+                  <Text style={styles.finalBtnText}>📜 View Certificate</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.finalBtn, styles.finalBtnGhost]} onPress={() => router.push(`/final-test/${id}` as any)}>
+                  <Text style={[styles.finalBtnText, { color: Colors.purple }]}>Practice</Text>
+                </TouchableOpacity>
+              </View>
+            ) : finalTest.pendingCertificate ? (
+              <TouchableOpacity style={styles.finalBtn} onPress={() => router.push(`/final-test/${id}` as any)}>
+                <Text style={styles.finalBtnText}>🎉 Passed — Get Certificate</Text>
+              </TouchableOpacity>
+            ) : !finalTest.unlocked ? (
+              <Text style={styles.finalLock}>
+                Complete all lessons to unlock ({finalTest.completedLessons}/{finalTest.totalLessons} done)
+              </Text>
+            ) : finalTest.nextAttemptAt && !finalTest.inProgress ? (
+              <Text style={styles.finalLock}>
+                Retake available after {new Date(finalTest.nextAttemptAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+              </Text>
+            ) : (
+              <TouchableOpacity style={styles.finalBtn} onPress={() => router.push(`/final-test/${id}` as any)}>
+                <Text style={styles.finalBtnText}>{finalTest.inProgress ? '▶ Resume Test' : '▶ Start Final Test'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>
+
+      <CertificateViewer code={certCode} visible={!!certCode} onClose={() => setCertCode(null)} />
 
       {/* In-app PDF viewer for study material */}
       <PdfViewer
@@ -303,6 +368,24 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: Colors.muted, fontSize: Typography.xs, fontWeight: FontWeight.semibold },
   module: { marginHorizontal: Spacing.xl, marginBottom: Spacing.xl },
+  // Final test card
+  finalCard: {
+    marginHorizontal: Spacing.xl, marginBottom: Spacing.xl, padding: Spacing.lg,
+    borderRadius: Radius.lg, backgroundColor: 'rgba(108,71,255,0.10)',
+    borderWidth: 1, borderColor: 'rgba(108,71,255,0.35)',
+  },
+  finalHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  finalIcon: { fontSize: 30 },
+  finalLabel: { color: Colors.purple, fontSize: Typography.xs, fontWeight: FontWeight.bold, letterSpacing: 0.5 },
+  finalTitle: { color: Colors.white, fontSize: Typography.base, fontWeight: FontWeight.bold, marginTop: 2 },
+  finalBadge: { color: Colors.muted, fontSize: Typography.xs, fontWeight: FontWeight.bold, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
+  finalBadgeOk: { color: Colors.success, backgroundColor: Colors.successLight },
+  finalMeta: { color: Colors.muted, fontSize: Typography.xs, marginTop: Spacing.sm, marginBottom: Spacing.md },
+  finalBtns: { flexDirection: 'row', gap: Spacing.sm },
+  finalBtn: { flex: 1, backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: 12, alignItems: 'center' },
+  finalBtnGhost: { backgroundColor: 'transparent', borderWidth: 1, borderColor: Colors.purple },
+  finalBtnText: { color: '#fff', fontSize: Typography.sm, fontWeight: FontWeight.bold },
+  finalLock: { color: Colors.warning, fontSize: Typography.sm },
   moduleTitle: {
     color: Colors.muted, fontSize: Typography.xs, fontWeight: FontWeight.bold,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: Spacing.sm,

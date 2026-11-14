@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors } from '@/theme';
+import { CertificateViewer } from '@/components/finalTest/CertificateViewer';
 import { useNotifications, patchNotificationsCache, NOTIFICATIONS_QUERY_KEY } from '@/hooks';
 import {
   markNotifAsRead,
@@ -26,6 +27,7 @@ function getIcon(type: string): string {
     case 'payment_failed':     return '❌';
     case 'new_course':         return '🚀';
     case 'achievement':        return '🏆';
+    case 'certificate_earned': return '🎓';
     case 'weekly_streak':      return '🔥';
     case 'leaderboard_winner': return '🥇';
     case 'app_update':         return '🔄';
@@ -128,6 +130,7 @@ export default function NotificationsScreen() {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<NotifItem | null>(null); // popup detail
   const [refreshing, setRefreshing] = useState(false);
+  const [cert, setCert] = useState<{ code: string; courseTitle?: string; percent?: number } | null>(null);
 
   // React Query → instant render from cache, fresh sync in background.
   const { data, isLoading, refetch } = useNotifications();
@@ -166,6 +169,24 @@ export default function NotificationsScreen() {
       }
       if (lessonId) {
         router.push(`/lesson/${lessonId}?tab=asknow`);
+        return;
+      }
+    }
+
+    // Course completed → open the certificate (download / share inside).
+    if (item.type === 'certificate_earned') {
+      const meta = (item.metadata || {}) as Record<string, unknown>;
+      let code = typeof meta.certificateCode === 'string' ? meta.certificateCode : '';
+      if (!code && item.action?.type === 'deeplink' && item.action.target) {
+        const m = item.action.target.match(/\/certificate\/([^/?#]+)/);
+        if (m) code = m[1];
+      }
+      if (code) {
+        setCert({
+          code,
+          courseTitle: typeof meta.courseTitle === 'string' ? meta.courseTitle : undefined,
+          percent: typeof meta.percent === 'number' ? meta.percent : undefined,
+        });
         return;
       }
     }
@@ -258,6 +279,13 @@ export default function NotificationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
+
+      <CertificateViewer
+        code={cert?.code ?? null}
+        visible={!!cert}
+        onClose={() => setCert(null)}
+        info={{ courseTitle: cert?.courseTitle, percent: cert?.percent }}
+      />
 
       {/* Detail Popup Modal — full notification detail + close button */}
       <Modal

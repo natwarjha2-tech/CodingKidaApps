@@ -88,7 +88,37 @@ export function CodeArenaCard() {
   );
 }
 
+/** Slim banner under the Code Arena card — opens "Draw it" (change a number, see a picture). */
+export function DrawItCard() {
+  return (
+    <TouchableOpacity
+      style={s.gm}
+      onPress={() => router.push('/draw-it' as never)}
+      activeOpacity={0.9}
+      accessibilityRole="button"
+      accessibilityLabel="Open Draw it"
+    >
+      <View style={s.gmIcon}><Text style={s.gmEmoji}>🎨</Text></View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.gmTitle}>Draw it <Text style={s.gmBeta}>NEW</Text></Text>
+        <Text style={s.gmSub}>Change a number and watch a picture draw itself!</Text>
+      </View>
+      <Text style={s.gmGo}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
 const s = StyleSheet.create({
+  gm: {
+    marginHorizontal: 16, marginBottom: 14, borderRadius: 20, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#FFF1E6', borderWidth: 1, borderColor: '#FFD9BD',
+  },
+  gmIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#FF8A3D', alignItems: 'center', justifyContent: 'center' },
+  gmEmoji: { fontSize: 24 },
+  gmTitle: { color: '#1E2233', fontSize: 16, fontWeight: '900' },
+  gmBeta: { color: '#FF6A00', fontSize: 11, fontWeight: '900' },
+  gmSub: { color: '#7A6A5C', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  gmGo: { color: '#FF6A00', fontSize: 26, fontWeight: '400' },
   card: {
     marginHorizontal: 16, marginBottom: 14, borderRadius: 24, padding: 16, overflow: 'hidden',
     backgroundColor: VIOLET,

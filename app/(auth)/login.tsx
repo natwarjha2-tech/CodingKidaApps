@@ -73,9 +73,31 @@ export default function LoginScreen() {
     try {
       await loginWithOtp(otpEmail.trim(), otpCode.trim(), true);
     } catch (err: any) {
+      if (err?.code === 'DEVICE_LIMIT') {
+        // The code is still valid: ask, then sign in again with the same code.
+        askReplaceDevice(err, async () => {
+          try {
+            await loginWithOtp(otpEmail.trim(), otpCode.trim(), true, true);
+          } catch (e: any) {
+            setOtpMsg({ text: e?.message || 'Could not sign in.', success: false });
+            setOtpBusy(false);
+          }
+        }, () => setOtpBusy(false));
+        return;
+      }
       setOtpMsg({ text: err?.message || 'Invalid OTP.', success: false });
       setOtpBusy(false);
     }
+  };
+
+  // Device limit: this account already has a phone. Offer to move it here.
+  const askReplaceDevice = (err: any, onConfirm: () => void, onCancel?: () => void) => {
+    const left = typeof err?.data?.switchesLeft === 'number' ? err.data.switchesLeft : null;
+    const note = left !== null ? `\n\nYou can change your device ${left} more time${left === 1 ? '' : 's'} this month.` : '';
+    Alert.alert('Use CodingKida on this phone?', `${err?.message ?? ''}${note}`, [
+      { text: 'Cancel', style: 'cancel', onPress: onCancel },
+      { text: 'Use this phone', onPress: onConfirm },
+    ]);
   };
 
   // Prefill saved credentials on mount (if the user ticked "Remember me"
@@ -118,8 +140,8 @@ export default function LoginScreen() {
       Alert.alert('Error', 'Please enter email and password.');
       return;
     }
-    try {
-      await login({ email: email.trim(), password: password.trim() }, rememberMe);
+    const doLogin = async (replaceDevice: boolean) => {
+      await login({ email: email.trim(), password: password.trim() }, rememberMe, replaceDevice);
       // On success, save (or clear) credentials for next-launch autofill.
       // Stored in OS-encrypted secure storage. Only saved when "Remember me"
       // is ticked; otherwise any previously-saved copy is removed.
@@ -130,8 +152,17 @@ export default function LoginScreen() {
           await StorageService.delete(SAVED_LOGIN_KEY);
         }
       } catch { /* non-fatal */ }
+    };
+    try {
+      await doLogin(false);
     } catch (err: any) {
-      Alert.alert('Login Failed', err.message ?? 'Please try again.');
+      if (err?.code === 'DEVICE_LIMIT') {
+        askReplaceDevice(err, () => {
+          doLogin(true).catch((e: any) => Alert.alert('Login Failed', e?.message ?? 'Please try again.'));
+        });
+        return;
+      }
+      Alert.alert(err?.code === 'DEVICE_SWITCH_LIMIT' ? 'Device limit reached' : 'Login Failed', err.message ?? 'Please try again.');
     }
   };
 

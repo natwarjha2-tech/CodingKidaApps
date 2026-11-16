@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'rea
 import Video, { type OnProgressData, type OnLoadData } from 'react-native-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Colors, Spacing, Typography, FontWeight } from '@/theme';
+import { AttendanceService } from '@/services/attendance.service';
 
 interface VideoPlayerProps {
   videoUrl: string;
@@ -154,6 +155,8 @@ export function VideoPlayer({
   const handleProgress = useCallback((data: OnProgressData) => {
     setCurrentTime(data.currentTime);
     const delta = data.currentTime - lastProgressTime.current;
+    // Learning time: a moving video counts as learning (paused = it stops counting).
+    if (delta > 0) AttendanceService.markVideoPlaying();
     if (delta > 0 && delta < 2) watchedSecs.current += delta;
     lastProgressTime.current = data.currentTime;
     if (!viewCounted.current && watchedSecs.current >= 30) {

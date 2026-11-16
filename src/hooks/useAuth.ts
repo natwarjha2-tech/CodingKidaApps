@@ -15,10 +15,10 @@ export const useAuth = () => {
   const queryClient = useQueryClient();
 
   const login = useCallback(
-    async (payload: LoginPayload, rememberMe = false) => {
+    async (payload: LoginPayload, rememberMe = false, replaceDevice = false) => {
       setLoading(true);
       try {
-        const { token, user } = await AuthService.login(payload, rememberMe);
+        const { token, user } = await AuthService.login(payload, rememberMe, replaceDevice);
 
         // Check if different user logged in — clear old cache
         const prevCacheRaw = await AsyncStorage.getItem('ck_qcache_last_user');
@@ -51,10 +51,10 @@ export const useAuth = () => {
   // Passwordless OTP login: verify OTP → establish session → go to dashboard.
   // Reuses the same post-login flow as password login (cache isolation + avatar).
   const loginWithOtp = useCallback(
-    async (email: string, otp: string, rememberMe = true) => {
+    async (email: string, otp: string, rememberMe = true, replaceDevice = false) => {
       setLoading(true);
       try {
-        const data = await authApi.verifyOtp(email, otp);
+        const data = await authApi.verifyOtp(email, otp, replaceDevice);
         if (!data.success || !data.token) throw new Error(data.message ?? 'Invalid OTP.');
         const user = data.user;
 

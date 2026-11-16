@@ -226,6 +226,9 @@ export default function ProfileScreen() {
       case 'Help & Support':
         router.push('/help-support');
         break;
+      case 'Delete Account':
+        router.push('/delete-account' as any);
+        break;
       default:
         break;
     }
@@ -243,6 +246,7 @@ export default function ProfileScreen() {
     { emoji: 'ℹ️', label: 'About Us', color: Colors.muted },
     { emoji: '⭐', label: 'Rate Us', color: Colors.warning },
     { emoji: '❤️', label: 'Help & Support', color: Colors.secondary },
+    { emoji: '🗑️', label: 'Delete Account', color: Colors.danger },
   ];
 
   const initial = user?.name?.charAt(0).toUpperCase() ?? 'U';

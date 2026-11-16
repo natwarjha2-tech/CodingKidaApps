@@ -1,12 +1,18 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share, Modal } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share, Modal, Pressable } from 'react-native';
+import { studentApi, type DayActivity } from '@/api/student.api';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDashboard, useCoins, useWeeklyStreakCount } from '@/hooks';
 import { achievementsApi, weeklyStreakApi, coinsApi, coursesApi } from '@/api';
 import { AttendanceService } from '@/services';
+import { localDayKey } from '@/services/attendance.service';
 import { formatCoinTx } from '@/utils/coinTx.util';
+import { useAuthStore } from '@/store';
+import { scoreGet, currentStreak } from '@/components/coding/playgroundStore';
+import { ParentReportCard } from '@/components/report/ParentReportCard';
+import { currentWeekLabel } from '@/utils/weeklyReport.util';
 import { Colors } from '@/theme';
 import type { Achievement, CourseDetail } from '@/types';
 
@@ -70,13 +76,38 @@ function buildDayDetail(dateKey: string, mins: number, opens: number, mode: 'pas
   return { emoji, accent, title, badge, message, showStats: true, mins, opens, pct };
 }
 
+const fmtClock = (iso: string) => {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+};
+
+function DaySection({ title, count, empty, children }: { title: string; count: number; empty: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.daySection}>
+      <Text style={styles.daySectionTitle}>{title}{count > 0 ? ` (${count})` : ''}</Text>
+      {count === 0 ? <Text style={styles.dayEmpty}>{empty}</Text> : children}
+    </View>
+  );
+}
+
+function DayRow({ main, sub, right }: { main: string; sub?: string; right?: string }) {
+  return (
+    <View style={styles.dayRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.dayRowMain} numberOfLines={2}>{main}</Text>
+        {!!sub && <Text style={styles.dayRowSub} numberOfLines={2}>{sub}</Text>}
+      </View>
+      {!!right && <Text style={styles.dayRowRight}>{right}</Text>}
+    </View>
+  );
+}
+
 export default function MyReportScreen() {
   const queryClient = useQueryClient();
   const { data: dashData, isLoading: dashLoading } = useDashboard();
   const { data: coinsData, isLoading: coinsLoading } = useCoins();
   const { data: streakCount } = useWeeklyStreakCount();
   const [todayMins, setTodayMins] = useState(0);
-  const [weekMins, setWeekMins] = useState(0);
   const [calendarDays, setCalendarDays] = useState<{ date: string; day: number; mins: number; active: boolean; isToday: boolean }[]>([]);
   // Full server-backed history (join → now), used to render ALL months.
   const [fullHistory, setFullHistory] = useState<{ joinedAt: string | null; byDate: Record<string, number> }>({ joinedAt: null, byDate: {} });
@@ -87,6 +118,10 @@ export default function MyReportScreen() {
   const [refreshing, setRefreshing] = useState(false);
   // Calendar day-detail popup (mirrors desktop showDayDetail)
   const [dayDetail, setDayDetail] = useState<ReturnType<typeof buildDayDetail> | null>(null);
+  // What was actually done that day (lessons, quizzes, exercises, coins) — from the server.
+  const [dayActivity, setDayActivity] = useState<DayActivity | null>(null);
+  const [dayActivityLoading, setDayActivityLoading] = useState(false);
+  const closeDay = useCallback(() => { setDayDetail(null); setDayActivity(null); setDayActivityLoading(false); }, []);
 
   // Course Progress — expandable dropdown that reveals modules and the completed
   // lessons inside each. Course detail (modules + completedLessons) is fetched
@@ -123,19 +158,39 @@ export default function MyReportScreen() {
   }, [expandedCourseId, courseDetails, queryClient]);
 
   // Open the per-day detail popup with real attendance data.
+  // Open the per-day popup. Everything in it (time, times opened, lessons,
+  // quizzes, exercises, coins) comes from the server — the same data the
+  // desktop app and the weekly parent report use.
   const openDayDetail = useCallback(async (dateKey: string) => {
-    const todayKey = new Date().toISOString().split('T')[0];
-    const mode: 'past' | 'future' = dateKey > todayKey ? 'future' : 'past';
-    const detail = mode === 'future' ? { mins: 0, opens: 0 } : await AttendanceService.getDayDetail(dateKey);
-    setDayDetail(buildDayDetail(dateKey, detail.mins, detail.opens, mode));
+    const mode: 'past' | 'future' = dateKey > localDayKey() ? 'future' : 'past';
+    if (mode === 'future') {
+      setDayActivity(null);
+      setDayDetail(buildDayDetail(dateKey, 0, 0, 'future'));
+      return;
+    }
+    const cached = await AttendanceService.getDayDetail(dateKey);
+    setDayDetail(buildDayDetail(dateKey, cached.mins, cached.opens, 'past'));
+    setDayActivity(null);
+    setDayActivityLoading(true);
+    try {
+      await AttendanceService.flush(false);
+      const res = await studentApi.getActivity(dateKey);
+      const day = res.days?.[0] ?? null;
+      setDayActivity(day);
+      if (day) setDayDetail(buildDayDetail(dateKey, day.minutes, day.sessions, 'past'));
+    } catch {
+      // Best effort: the popup keeps the time summary it already shows.
+    } finally {
+      setDayActivityLoading(false);
+    }
   }, []);
 
-  // Reload attendance data (also used by refresh)
-  const loadAttendance = useCallback(() => {
+  // Reload attendance data (also used by refresh). Sends this session's minutes
+  // first, then reads everything from the server.
+  const loadAttendance = useCallback(async () => {
+    try { await AttendanceService.flush(false); } catch { /* ignore */ }
     AttendanceService.getTodayMins().then(setTodayMins);
-    AttendanceService.getWeekMins().then(setWeekMins);
     AttendanceService.getLast30Days().then(setCalendarDays);
-    // Full join→now history from server (merged with local). Best-effort.
     AttendanceService.getFullHistory().then(setFullHistory).catch(() => {});
   }, []);
 
@@ -227,24 +282,6 @@ export default function MyReportScreen() {
   // activity instead of a misleading "0 min" (mirrors desktop _spFmtTime).
   const fmtKpiTime = useCallback((mins: number) => (!mins || mins <= 0 ? '—' : AttendanceService.formatMins(mins)), []);
 
-  // Active days in the CURRENT calendar week (Mon–Sun), out of 7 — from the
-  // same real attendance records (mirrors desktop _weekActiveDays).
-  const weekActiveDays = useMemo(() => {
-    const wkToday = new Date();
-    const dow = wkToday.getDay();                 // 0=Sun..6=Sat
-    const mondayOffset = dow === 0 ? 6 : dow - 1; // days since Monday
-    const monday = new Date(wkToday); monday.setDate(wkToday.getDate() - mondayOffset); monday.setHours(0, 0, 0, 0);
-    let count = 0;
-    for (const rec of calendarDays) {
-      if (!rec || !rec.active || !rec.date) continue;
-      const p = String(rec.date).split('-');
-      if (p.length !== 3) continue;
-      const rd = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])); rd.setHours(0, 0, 0, 0);
-      if (rd >= monday && rd <= wkToday) count++;
-    }
-    return count;
-  }, [calendarDays]);
-
   // Monthly calendars (mirrors desktop _renderParentReport all-months view):
   // Build ONE Mon-first grid per month from the student's JOIN month → the
   // current month (newest first). Per-day minutes come from the merged
@@ -284,6 +321,24 @@ export default function MyReportScreen() {
 
     return { byDate, curAbs, minAbs, todayKey };
   }, [calendarDays, fullHistory]);
+
+  // "This Week" = Monday → today, added up from the SAME per-day minutes the
+  // calendar below shows. The card, the calendar and the weekly report sent to
+  // the parent therefore always agree (before, the card used a rolling 7 days).
+  const { weekMins, weekActiveDays } = useMemo(() => {
+    const now = new Date();
+    const back = now.getDay() === 0 ? 6 : now.getDay() - 1; // days since Monday
+    let mins = 0;
+    let days = 0;
+    for (let i = back; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const m = calData.byDate[key] || 0;
+      mins += m;
+      if (m > 0) days += 1;
+    }
+    return { weekMins: mins, weekActiveDays: days };
+  }, [calData]);
 
   // Clamp the viewed month into [minAbs, curAbs] and default to the current month.
   const viewAbs = useMemo(() => {
@@ -398,6 +453,34 @@ export default function MyReportScreen() {
 
     return { icon, title, text, thisWeekDays, nextGoal, missionText, missionSub, missionProgress };
   }, [calendarDays]);
+
+  // ── Weekly report for parents (WhatsApp). Code Arena numbers live on this phone. ──
+  const userId = useAuthStore((s) => s.user?.id);
+  const authName = useAuthStore((s) => s.user?.name);
+  const [arena, setArena] = useState<{ points: number; solved: number; streak: number } | null>(null);
+  useEffect(() => {
+    scoreGet(userId)
+      .then((d) => setArena({ points: d.totalPoints, solved: d.solvedProblems.length, streak: currentStreak(d.submissionCalendar) }))
+      .catch(() => {});
+  }, [userId]);
+
+  const parentReport = useMemo(() => ({
+    weekLabel: currentWeekLabel(),
+    weekTime: fmtKpiTime(weekMins),
+    activeDays: weekActiveDays,
+    weeklyStreak: streakCompletedCount,
+    lessonsCompleted: totalVideosWatched,
+    coins: totalCoins,
+    achievements: achievements.length,
+    courses: enrolledCourses.map((c) => ({
+      title: c.title,
+      percent: Math.round(c.progressPercent ?? 0),
+      done: c.completedLessons ?? 0,
+      total: c.totalLessons ?? 0,
+    })),
+    codeArena: arena,
+    motivation: `${motivation.title} ${motivation.text}`,
+  }), [weekMins, weekActiveDays, streakCompletedCount, totalVideosWatched, totalCoins, achievements.length, enrolledCourses, arena, motivation, fmtKpiTime]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -583,6 +666,9 @@ export default function MyReportScreen() {
               </View>
               <Text style={styles.missionProgressText}>{motivation.thisWeekDays} / {motivation.nextGoal} days this week</Text>
             </View>
+
+            {/* Weekly report → parent's WhatsApp */}
+            <ParentReportCard report={parentReport} fallbackName={authName || ''} />
 
             {/* ═══════════ ACHIEVEMENTS SECTION ═══════════ */}
             <Text style={styles.sectionTitle}>🏆 Recent Achievement</Text>
@@ -898,9 +984,12 @@ export default function MyReportScreen() {
       </ScrollView>
 
       {/* Day-detail popup (mirrors desktop showDayDetail) */}
-      <Modal visible={!!dayDetail} transparent animationType="fade" onRequestClose={() => setDayDetail(null)}>
-        <TouchableOpacity style={styles.dayOverlay} activeOpacity={1} onPress={() => setDayDetail(null)}>
-          <TouchableOpacity activeOpacity={1} style={[styles.dayCard, { borderColor: `${dayDetail?.accent ?? Colors.primary}55` }]}>
+      <Modal visible={!!dayDetail} transparent animationType="fade" onRequestClose={closeDay}>
+        <View style={styles.dayOverlay}>
+          {/* Tapping outside the card closes it; the card itself scrolls freely. */}
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeDay} />
+          <View style={[styles.dayCard, { borderColor: `${dayDetail?.accent ?? Colors.primary}55` }]}>
+            <ScrollView showsVerticalScrollIndicator contentContainerStyle={{ paddingBottom: 4 }}>
             {dayDetail && (
               <>
                 <View style={styles.dayHead}>
@@ -908,7 +997,7 @@ export default function MyReportScreen() {
                     <Text style={{ fontSize: 26 }}>{dayDetail.emoji}</Text>
                     <Text style={styles.dayTitle}>{dayDetail.title}</Text>
                   </View>
-                  <TouchableOpacity style={styles.dayClose} onPress={() => setDayDetail(null)}>
+                  <TouchableOpacity style={styles.dayClose} onPress={closeDay}>
                     <Text style={styles.dayCloseText}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -938,10 +1027,45 @@ export default function MyReportScreen() {
                 )}
 
                 <Text style={styles.dayMessage}>{dayDetail.message}</Text>
+
+                {dayActivityLoading && <ActivityIndicator color={Colors.primary} style={{ marginTop: 12 }} />}
+                {dayActivity && (
+                  <View style={styles.dayList}>
+                    <DaySection title="📚 Lessons completed" empty="No lessons completed" count={dayActivity.lessons.length}>
+                      {dayActivity.lessons.map((l, i) => (
+                        <DayRow key={`l${i}`} main={l.title} sub={[l.course, l.module].filter(Boolean).join(' · ')} right={fmtClock(l.at)} />
+                      ))}
+                    </DaySection>
+                    <DaySection title="📝 Quizzes" empty="No quizzes taken" count={dayActivity.quizzes.length}>
+                      {dayActivity.quizzes.map((q, i) => (
+                        <DayRow key={`q${i}`} main={q.lesson} sub={`Score ${q.correct}/${q.total} · ${fmtClock(q.at)}`} right={`${q.total ? Math.round((q.correct / q.total) * 100) : 0}%`} />
+                      ))}
+                    </DaySection>
+                    <DaySection title="💻 Coding exercises" empty="No exercises attempted" count={dayActivity.exercises.length}>
+                      {dayActivity.exercises.map((e, i) => (
+                        <DayRow
+                          key={`e${i}`}
+                          main={e.title}
+                          sub={[e.language, `${e.attempts} attempt${e.attempts === 1 ? '' : 's'}`, fmtClock(e.at)].filter(Boolean).join(' · ')}
+                          right={e.passed ? '✅ Passed' : '⏳ Not yet'}
+                        />
+                      ))}
+                    </DaySection>
+                    <DaySection title="🪙 Coins and badges" empty="No coins or badges" count={dayActivity.coins.length + dayActivity.badges.length}>
+                      {dayActivity.coins.map((c, i) => (
+                        <DayRow key={`c${i}`} main={c.reason} sub={fmtClock(c.at)} right={`${c.type === 'EARNED' ? '+' : '-'}${c.coins}`} />
+                      ))}
+                      {dayActivity.badges.map((b, i) => (
+                        <DayRow key={`b${i}`} main={`🏅 ${b.title}`} sub={`${b.lesson} · ${fmtClock(b.at)}`} right="" />
+                      ))}
+                    </DaySection>
+                  </View>
+                )}
               </>
             )}
-          </TouchableOpacity>
-        </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -1096,7 +1220,7 @@ const styles = StyleSheet.create({
 
   // Day-detail popup
   dayOverlay: { flex: 1, backgroundColor: 'rgba(5,5,15,0.72)', alignItems: 'center', justifyContent: 'center', padding: 20 },
-  dayCard: { width: '100%', maxWidth: 340, backgroundColor: Colors.bg2, borderRadius: 20, padding: 22, borderWidth: 1 },
+  dayCard: { width: '100%', maxWidth: 380, maxHeight: '85%', backgroundColor: Colors.bg2, borderRadius: 20, padding: 22, borderWidth: 1 },
   dayHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   dayHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   dayTitle: { color: '#fff', fontSize: 15, fontWeight: '800' },
@@ -1112,6 +1236,14 @@ const styles = StyleSheet.create({
   dayGoalPct: { fontSize: 11, fontWeight: '800' },
   dayGoalTrack: { height: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
   dayGoalFill: { height: '100%', borderRadius: 10 },
+  dayList: { marginTop: 12 },
+  daySection: { marginBottom: 12 },
+  daySectionTitle: { color: '#fff', fontSize: 13, fontWeight: '800', marginBottom: 6 },
+  dayEmpty: { color: Colors.muted, fontSize: 12 },
+  dayRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
+  dayRowMain: { color: '#e2e8f0', fontSize: 12, fontWeight: '700' },
+  dayRowSub: { color: Colors.muted, fontSize: 11, marginTop: 2 },
+  dayRowRight: { color: '#C4B5FD', fontSize: 12, fontWeight: '800' },
   dayMessage: { color: '#cbd5e1', fontSize: 13, lineHeight: 20 },
 
   // Stats

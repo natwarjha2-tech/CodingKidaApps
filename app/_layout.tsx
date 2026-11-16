@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { AppState } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { AppState, Alert, Keyboard } from 'react-native';
+import { Stack, useRouter, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,7 +12,8 @@ import * as Notifications from 'expo-notifications';
 import { useAuthStore } from '@/store';
 import { AuthService, AttendanceService } from '@/services';
 import { isRememberMeValid, isSessionValid, refreshSession, StorageService, USER_KEY } from '@/services/storage.service';
-import { studentApi, apiClient } from '@/api';
+import { studentApi, apiClient, authApi } from '@/api';
+import { setSignedOutHandler } from '@/api/client';
 import { Colors } from '@/theme';
 import {
   registerPushToken,
@@ -113,6 +114,23 @@ function AuthInitializer() {
   const { setAuth, clearAuth, setLoading } = useAuthStore();
   const router = useRouter();
 
+  // Device limit: the server signed this phone out (the account is now used on
+  // another phone, or an admin unlinked it). Go back to the sign-in screen once.
+  useEffect(() => {
+    let shown = false;
+    setSignedOutHandler((code, message) => {
+      if (shown) return;
+      shown = true;
+      AttendanceService.recordEnd().catch(() => {});
+      clearAuth();
+      router.replace('/(auth)/login');
+      Alert.alert(code === 'APP_UPDATE_REQUIRED' ? 'Update needed' : 'Signed out', message, [
+        { text: 'OK', onPress: () => { shown = false; } },
+      ]);
+    });
+    return () => setSignedOutHandler(null);
+  }, [clearAuth, router]);
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -143,6 +161,18 @@ function AuthInitializer() {
               setAuth(token, updatedUser);
             }
           } catch {}
+
+          // Device limit: confirm this phone is still the student's phone. Older
+          // sign-ins get tied to this phone (a new token comes back). If the
+          // account moved to another phone, the signed-out handler below runs.
+          authApi.checkDevice()
+            .then(async (res) => {
+              if (res?.token) {
+                await StorageService.set('ck_token', res.token);
+                setAuth(res.token, user);
+              }
+            })
+            .catch(() => {});
 
           // Pre-fetch fresh data silently in background (updates cache)
           _prefetchAllData();
@@ -175,6 +205,12 @@ function AuthInitializer() {
           type?: string;
           action?: { type: string; target: string };
         };
+
+        // Sunday "send this week's report" reminder → open My Report directly.
+        if (data?.type === 'weekly_report_reminder') {
+          setTimeout(() => router.push('/my-report' as any), 300);
+          return;
+        }
 
         // Small delay to ensure app is fully ready before navigating
         setTimeout(() => {
@@ -223,8 +259,23 @@ export default function RootLayout() {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
   }, []);
 
+  // Learning time: tell the tracker which screen is open and when the keyboard
+  // is up (only learning screens, playing videos and recent touches count).
+  const pathname = usePathname();
+  useEffect(() => { AttendanceService.setScreen(pathname); }, [pathname]);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => AttendanceService.setKeyboardOpen(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => AttendanceService.setKeyboardOpen(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView
+      style={{ flex: 1 }}
+      // Sees every touch first (never takes it), so idle time can be detected.
+      onStartShouldSetResponderCapture={() => { AttendanceService.markInput(); return false; }}
+      onMoveShouldSetResponderCapture={() => { AttendanceService.markInput(); return false; }}
+    >
       <SafeAreaProvider>
         {/* Keyboard handling is OFF app-wide (existing screens keep their current
             behaviour). The live-room screen turns it on while mounted so its chat
@@ -241,6 +292,7 @@ export default function RootLayout() {
             <Stack.Screen name="lesson/[id]" options={{ animation: 'slide_from_bottom' }} />
             <Stack.Screen name="coding/[exerciseId]" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="final-test/[courseId]" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="draw-it/index" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="code-editor/index" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="code-editor/[problemId]" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="enrolled-courses" options={{ animation: 'slide_from_right' }} />
@@ -258,6 +310,7 @@ export default function RootLayout() {
             <Stack.Screen name="downloads" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="offline-player" options={{ animation: 'slide_from_bottom' }} />
             <Stack.Screen name="change-password" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="delete-account" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />

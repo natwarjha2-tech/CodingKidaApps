@@ -1,12 +1,20 @@
 import { apiClient } from './client';
 import type { AuthResponse, LoginPayload, SignupPayload } from '@/types';
+import { getDeviceInfo } from '@/services/device.service';
 
 export const authApi = {
-  login: (payload: LoginPayload) =>
-    apiClient.post<AuthResponse>('/api/auth/login', payload).then((r) => r.data),
+  /** `replaceDevice` = the student confirmed "use this phone instead" (device limit). */
+  login: async (payload: LoginPayload, replaceDevice = false) => {
+    const device = await getDeviceInfo();
+    return apiClient
+      .post<AuthResponse>('/api/auth/login', { ...payload, device, replaceDevice })
+      .then((r) => r.data);
+  },
 
-  signup: (payload: SignupPayload) =>
-    apiClient.post<AuthResponse>('/api/auth/signup', payload).then((r) => r.data),
+  signup: async (payload: SignupPayload) => {
+    const device = await getDeviceInfo();
+    return apiClient.post<AuthResponse>('/api/auth/signup', { ...payload, device }).then((r) => r.data);
+  },
 
   changePassword: (currentPassword: string, newPassword: string) =>
     apiClient
@@ -22,8 +30,21 @@ export const authApi = {
       .post<{ success: boolean; message?: string }>('/api/auth/send-otp', { email })
       .then((r) => r.data),
 
-  verifyOtp: (email: string, otp: string) =>
-    apiClient
-      .post<AuthResponse>('/api/auth/verify-otp', { email, otp })
-      .then((r) => r.data),
+  verifyOtp: async (email: string, otp: string, replaceDevice = false) => {
+    const device = await getDeviceInfo();
+    return apiClient
+      .post<AuthResponse>('/api/auth/verify-otp', { email, otp, device, replaceDevice })
+      .then((r) => r.data);
+  },
+
+  /**
+   * App start with a saved sign-in: confirms this phone is still the student's
+   * phone. May return a new token (older sign-ins get tied to this phone).
+   */
+  checkDevice: async () => {
+    const device = await getDeviceInfo();
+    return apiClient
+      .post<{ success: boolean; token?: string }>('/api/auth/device', { device })
+      .then((r) => r.data);
+  },
 };

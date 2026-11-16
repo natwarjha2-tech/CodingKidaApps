@@ -8,7 +8,7 @@ import { useCourseStore } from '@/store';
 import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll, usePrefetchNotifications } from '@/hooks';
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
-import { CodeArenaCard } from '@/components/common/CodeArenaCard';
+import { CodeArenaCard, DrawItCard } from '@/components/common/CodeArenaCard';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
 import { getUnreadCount } from '@/services/notification.service';
@@ -471,6 +471,7 @@ export default function DashboardScreen() {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
         <CodeArenaCard />
+        <DrawItCard />
         <View style={styles.quickActions}>
           <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.greenCard }]} onPress={() => router.push('/leaderboard')} activeOpacity={0.85}>
             <Text style={styles.quickActionEmoji}>🏆</Text>

@@ -16,6 +16,13 @@ export interface ApiError extends Error {
   data?: Record<string, unknown>;
 }
 
+// Called when the server says this student must verify a parent first
+// (403 PARENT_CONSENT_REQUIRED). Registered by the root layout.
+let _consentHandler: (() => void) | null = null;
+export function setConsentRequiredHandler(fn: (() => void) | null): void {
+  _consentHandler = fn;
+}
+
 // Called when the server says this device was signed out (device limit) or the
 // app must be updated. Registered by the root layout.
 type SignedOutHandler = (code: string, message: string) => void;
@@ -51,6 +58,9 @@ apiClient.interceptors.response.use(
       'Something went wrong';
     if (status === 401 && (code === 'DEVICE_REVOKED' || code === 'APP_UPDATE_REQUIRED' || code === 'ACCOUNT_DELETED')) {
       try { _signedOutHandler?.(code, message); } catch { /* ignore */ }
+    }
+    if (status === 403 && code === 'PARENT_CONSENT_REQUIRED') {
+      try { _consentHandler?.(); } catch { /* ignore */ }
     }
     const err: ApiError = Object.assign(new Error(message), { status, code, data });
     return Promise.reject(err);

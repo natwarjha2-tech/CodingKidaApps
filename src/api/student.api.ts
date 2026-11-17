@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { DashboardData, StudentProfile } from '@/types';
+import type { DashboardData, StudentProfile, ConsentState } from '@/types';
 
 /** What the student did on one day (same data the weekly parent report is built from). */
 export interface DayActivity {
@@ -7,10 +7,10 @@ export interface DayActivity {
   minutes: number;
   sessions: number;
   lessons: { title: string; module: string | null; course: string | null; at: string }[];
-  quizzes: { lesson: string; course: string | null; correct: number; total: number; at: string }[];
-  exercises: { title: string; lesson: string | null; language: string | null; passed: boolean; attempts: number; at: string }[];
-  coins: { type: string; coins: number; reason: string; at: string }[];
-  badges: { title: string; lesson: string; at: string }[];
+  quizzes: { lesson: string; module?: string | null; course: string | null; correct: number; total: number; at: string }[];
+  exercises: { title: string; lesson: string | null; module?: string | null; course?: string | null; language: string | null; passed: boolean; attempts: number; at: string }[];
+  coins: { type: string; coins: number; reason: string; lesson?: string | null; module?: string | null; course?: string | null; at: string }[];
+  badges: { title: string; lesson: string; module?: string | null; course?: string | null; at: string }[];
 }
 
 export const studentApi = {
@@ -39,6 +39,22 @@ export const studentApi = {
   confirmParentCode: (code: string) =>
     apiClient
       .post<{ success: boolean; verified: boolean }>('/api/student/parent-verify/confirm', { code })
+      .then((r) => r.data),
+
+  /** Does this student need a verified parent, and what is already done? */
+  getConsent: () =>
+    apiClient.get<{ success: boolean; consent: ConsentState }>('/api/student/consent').then((r) => r.data.consent),
+
+  /** Email a 6-digit code to the parent email saved on the profile. */
+  sendConsentEmailCode: () =>
+    apiClient
+      .post<{ success: boolean; sentTo: string; expiresInSec: number }>('/api/student/consent/email/send')
+      .then((r) => r.data),
+
+  /** Check the code the parent gave → the parent's email becomes verified. */
+  confirmConsentEmailCode: (code: string) =>
+    apiClient
+      .post<{ success: boolean; verified: boolean }>('/api/student/consent/email/confirm', { code })
       .then((r) => r.data),
 
   getAvatar: () =>

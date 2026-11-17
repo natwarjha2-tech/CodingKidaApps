@@ -13,7 +13,7 @@ import { useAuthStore } from '@/store';
 import { AuthService, AttendanceService } from '@/services';
 import { isRememberMeValid, isSessionValid, refreshSession, StorageService, USER_KEY } from '@/services/storage.service';
 import { studentApi, apiClient, authApi } from '@/api';
-import { setSignedOutHandler } from '@/api/client';
+import { setSignedOutHandler, setConsentRequiredHandler } from '@/api/client';
 import { Colors } from '@/theme';
 import {
   registerPushToken,
@@ -113,6 +113,52 @@ function _prefetchAllData() {
 function AuthInitializer() {
   const { setAuth, clearAuth, setLoading } = useAuthStore();
   const router = useRouter();
+  const pathname = usePathname();
+  const pathRef = useRef(pathname);
+  useEffect(() => { pathRef.current = pathname; }, [pathname]);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const userId = useAuthStore((s) => s.user?.id);
+  const reminded = useRef<string | null>(null);
+
+  // Parent verification: the server says this student must verify a parent first
+  // (the deadline passed). Open the verification screen once.
+  useEffect(() => {
+    let busy = false;
+    setConsentRequiredHandler(() => {
+      if (busy || pathRef.current.startsWith('/parent-consent')) return;
+      busy = true;
+      router.replace('/parent-consent' as any);
+      setTimeout(() => { busy = false; }, 4000);
+    });
+    return () => setConsentRequiredHandler(null);
+  }, [router]);
+
+  // After sign-in: does this student still need to verify a parent?
+  //  - deadline passed  → open the verification screen (the app is on hold until done)
+  //  - days left        → one reminder per sign-in, with a "Verify now" button
+  useEffect(() => {
+    if (!isAuthenticated || !userId) return;
+    let cancelled = false;
+    studentApi.getConsent()
+      .then((c) => {
+        if (cancelled || !c.enabled || !c.required || c.verified) return;
+        if (pathRef.current.startsWith('/parent-consent')) return;
+        if (c.blocked) { router.replace('/parent-consent' as any); return; }
+        if (reminded.current === userId) return;
+        reminded.current = userId;
+        const left = c.daysLeft ?? 0;
+        Alert.alert(
+          'Parent verification needed',
+          `Please ask your parent or guardian to confirm. ${left <= 1 ? 'Today is the last day.' : `You have ${left} days left.`} After that, learning stops until it is done.`,
+          [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Verify now', onPress: () => router.push('/parent-consent' as any) },
+          ],
+        );
+      })
+      .catch(() => { /* never block the app because this check failed */ });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, userId, router]);
 
   // Device limit: the server signed this phone out (the account is now used on
   // another phone, or an admin unlinked it). Go back to the sign-in screen once.
@@ -312,6 +358,8 @@ export default function RootLayout() {
             <Stack.Screen name="change-password" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="delete-account" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="parent-consent" options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
+            <Stack.Screen name="payment-done" options={{ animation: 'none' }} />
             <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />

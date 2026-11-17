@@ -90,12 +90,13 @@ function DaySection({ title, count, empty, children }: { title: string; count: n
   );
 }
 
-function DayRow({ main, sub, right }: { main: string; sub?: string; right?: string }) {
+function DayRow({ main, sub, extra, right }: { main: string; sub?: string; extra?: string; right?: string }) {
   return (
     <View style={styles.dayRow}>
       <View style={{ flex: 1 }}>
         <Text style={styles.dayRowMain} numberOfLines={2}>{main}</Text>
         {!!sub && <Text style={styles.dayRowSub} numberOfLines={2}>{sub}</Text>}
+        {!!extra && <Text style={styles.dayRowSub} numberOfLines={2}>{extra}</Text>}
       </View>
       {!!right && <Text style={styles.dayRowRight}>{right}</Text>}
     </View>
@@ -1038,7 +1039,13 @@ export default function MyReportScreen() {
                     </DaySection>
                     <DaySection title="📝 Quizzes" empty="No quizzes taken" count={dayActivity.quizzes.length}>
                       {dayActivity.quizzes.map((q, i) => (
-                        <DayRow key={`q${i}`} main={q.lesson} sub={`Score ${q.correct}/${q.total} · ${fmtClock(q.at)}`} right={`${q.total ? Math.round((q.correct / q.total) * 100) : 0}%`} />
+                        <DayRow
+                          key={`q${i}`}
+                          main={q.lesson}
+                          sub={[q.course, q.module].filter(Boolean).join(' · ')}
+                          extra={`Score ${q.correct}/${q.total} · ${fmtClock(q.at)}`}
+                          right={`${q.total ? Math.round((q.correct / q.total) * 100) : 0}%`}
+                        />
                       ))}
                     </DaySection>
                     <DaySection title="💻 Coding exercises" empty="No exercises attempted" count={dayActivity.exercises.length}>
@@ -1046,17 +1053,30 @@ export default function MyReportScreen() {
                         <DayRow
                           key={`e${i}`}
                           main={e.title}
-                          sub={[e.language, `${e.attempts} attempt${e.attempts === 1 ? '' : 's'}`, fmtClock(e.at)].filter(Boolean).join(' · ')}
+                          sub={[e.course, e.module].filter(Boolean).join(' · ')}
+                          extra={[e.lesson, e.language, `${e.attempts} attempt${e.attempts === 1 ? '' : 's'}`, fmtClock(e.at)].filter(Boolean).join(' · ')}
                           right={e.passed ? '✅ Passed' : '⏳ Not yet'}
                         />
                       ))}
                     </DaySection>
                     <DaySection title="🪙 Coins and badges" empty="No coins or badges" count={dayActivity.coins.length + dayActivity.badges.length}>
                       {dayActivity.coins.map((c, i) => (
-                        <DayRow key={`c${i}`} main={c.reason} sub={fmtClock(c.at)} right={`${c.type === 'EARNED' ? '+' : '-'}${c.coins}`} />
+                        <DayRow
+                          key={`c${i}`}
+                          main={c.reason}
+                          sub={[c.course, c.module].filter(Boolean).join(' · ')}
+                          extra={[c.lesson, fmtClock(c.at)].filter(Boolean).join(' · ')}
+                          right={`${c.type === 'EARNED' ? '+' : '-'}${c.coins}`}
+                        />
                       ))}
                       {dayActivity.badges.map((b, i) => (
-                        <DayRow key={`b${i}`} main={`🏅 ${b.title}`} sub={`${b.lesson} · ${fmtClock(b.at)}`} right="" />
+                        <DayRow
+                          key={`b${i}`}
+                          main={`🏅 ${b.title}`}
+                          sub={[b.course, b.module].filter(Boolean).join(' · ')}
+                          extra={`${b.lesson} · ${fmtClock(b.at)}`}
+                          right=""
+                        />
                       ))}
                     </DaySection>
                   </View>

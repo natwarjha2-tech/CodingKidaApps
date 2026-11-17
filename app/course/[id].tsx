@@ -4,7 +4,8 @@ import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useCourseDetail, useCourses } from '@/hooks';
-import { finalTestApi } from '@/api';
+import { finalTestApi, apiClient } from '@/api';
+import * as WebBrowser from 'expo-web-browser';
 import { CertificateViewer } from '@/components/finalTest/CertificateViewer';
 import { useCourseStore } from '@/store';
 import { DownloadService } from '@/services';
@@ -25,7 +26,7 @@ function materialIcon(fileType: string): { icon: string; color: string } {
 
 export default function CourseDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data, isLoading } = useCourseDetail(id);
+  const { data, isLoading, refetch: refetchCourse } = useCourseDetail(id);
   // Course list is already cached (dashboard/courses/profile keep it warm) and
   // the list route computes the real feedback-based rating — reuse it here for
   // the hero rating (Option B), no extra requests. Falls back gracefully.
@@ -79,9 +80,41 @@ export default function CourseDetailScreen() {
   // Re-check whenever the screen regains focus (e.g. returning from Downloads).
   useFocusEffect(useCallback(() => { refreshMaterialStatus(); }, [refreshMaterialStatus]));
 
-  const openPayment = () => {
-    if (!course) return;
-    Linking.openURL(`https://www.codingkida.com/payment?courseId=${course.id}`);
+  // Buy: open the payment page already signed in (one-time code from the server,
+  // so the student doesn't log in again), in an in-app browser tab. When the tab
+  // is closed, reload the course so a finished payment unlocks it.
+  const [openingPayment, setOpeningPayment] = useState(false);
+  const unlockLabel = (() => {
+    const p = course?.purchase;
+    const verb = course?.accessExpired ? 'Renew' : 'Unlock';
+    if (!p) return '🔓 ' + verb + ' Course';
+    const what = p.plan === 'zenalpha' ? ' with ZenAlpha' : '';
+    return '🔓 ' + verb + what + ' – ₹' + p.price + ' · 3 months';
+  })();
+  const openPayment = async () => {
+    if (!course || openingPayment) return;
+    // return=mobile: after a successful payment the page opens codingkida://payment-done,
+    // which closes the browser tab and brings the student back here automatically.
+    const next = `/payment?courseId=${encodeURIComponent(course.id)}&from=app&return=mobile`;
+    setOpeningPayment(true);
+    let url = `https://www.codingkida.com${next}`;
+    try {
+      const r = await apiClient.post<{ success: boolean; url: string }>('/api/auth/web-handoff', { next });
+      if (r.data?.url) url = r.data.url;
+    } catch { /* fall back to the plain page (asks to sign in) */ }
+    try {
+      await WebBrowser.openAuthSessionAsync(url, 'codingkida://payment-done', {
+        toolbarColor: '#0f0f1a', controlsColor: '#a78bfa', showTitle: true,
+      });
+    } catch {
+      Linking.openURL(url).catch(() => {});
+    } finally {
+      setOpeningPayment(false);
+      // The payment server (webhook) unlocks the course a few seconds after paying:
+      // check now and a few more times so it unlocks as soon as that happens.
+      refetchCourse();
+      [2000, 5000, 10000, 20000].forEach((ms) => setTimeout(() => { refetchCourse(); }, ms));
+    }
   };
 
   // View a study-material file in the in-app PDF viewer
@@ -198,7 +231,7 @@ export default function CourseDetailScreen() {
           {/* Unlock Course Button — shown when not enrolled */}
           {!course.isEnrolled && (
             <TouchableOpacity style={styles.unlockBtn} onPress={openPayment}>
-              <Text style={styles.unlockBtnText}>🔓 Unlock Course</Text>
+              <Text style={styles.unlockBtnText}>{unlockLabel}</Text>
             </TouchableOpacity>
           )}
         </View>

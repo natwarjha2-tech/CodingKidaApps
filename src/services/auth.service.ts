@@ -1,6 +1,6 @@
 import { authApi } from '@/api';
 import { StorageService, TOKEN_KEY, USER_KEY, setRememberMe, clearRememberMe, setSession, clearSession } from './storage.service';
-import type { LoginPayload, SignupPayload, User } from '@/types';
+import type { LoginPayload, SignupPayload, User, ConsentState } from '@/types';
 
 /** Begin measuring learning time for the student who just signed in. */
 function startAttendance(): void {
@@ -30,14 +30,14 @@ export const AuthService = {
     else await clearRememberMe();
   },
 
-  signup: async (payload: SignupPayload): Promise<{ token: string; user: User }> => {
+  signup: async (payload: SignupPayload): Promise<{ token: string; user: User; consent?: ConsentState }> => {
     const data = await authApi.signup(payload);
     if (!data.success || !data.token) throw new Error(data.message ?? 'Signup failed');
     await StorageService.set(TOKEN_KEY, data.token);
     await StorageService.setObject(USER_KEY, data.user);
     await setSession();
     startAttendance();
-    return { token: data.token, user: data.user };
+    return { token: data.token, user: data.user, consent: data.consent };
   },
 
   logout: async (): Promise<void> => {

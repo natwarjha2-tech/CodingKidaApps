@@ -9,6 +9,7 @@ import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStre
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { CodeArenaCard, DrawItCard } from '@/components/common/CodeArenaCard';
+import { ProfileVerification } from '@/components/common/ProfileVerification';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
 import { getUnreadCount } from '@/services/notification.service';
@@ -262,6 +263,9 @@ export default function DashboardScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={isRefetching || refreshing} onRefresh={handleRefreshAll} tintColor={Colors.primary} />}
       >
+        {/* Stays until the profile / parent is verified */}
+        <ProfileVerification variant="banner" />
+
         {/* Welcome Card — banner artwork as background, dynamic native UI on top.
             Data/navigation unchanged — only the visual treatment is new. */}
         <View style={styles.welcomeWrapper}>

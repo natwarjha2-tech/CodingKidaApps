@@ -92,10 +92,12 @@ export const useAuth = () => {
       setLoading(true);
       try {
         queryClient.clear(); // New user — always fresh
-        const { token, user } = await AuthService.signup(payload);
+        const { token, user, consent } = await AuthService.signup(payload);
         await AsyncStorage.setItem('ck_qcache_last_user', user.id);
         setAuth(token, user);
-        router.replace('/(tabs)/dashboard');
+        // Under 18: the parent must be verified before anything else.
+        if (consent?.required && !consent.verified) router.replace('/parent-consent' as any);
+        else router.replace('/(tabs)/dashboard');
       } finally {
         setLoading(false);
       }

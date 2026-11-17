@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image, Animated, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -11,6 +11,7 @@ import { StorageService, USER_KEY } from '@/services/storage.service';
 import { Colors } from '@/theme';
 import { apiClient, studentApi, achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
+import { ProfileVerification } from '@/components/common/ProfileVerification';
 import type { Achievement } from '@/types';
 
 // Profile-section lavender palette (per provided color spec).
@@ -226,6 +227,12 @@ export default function ProfileScreen() {
       case 'Help & Support':
         router.push('/help-support');
         break;
+      case 'Terms & Conditions':
+        Linking.openURL('https://www.codingkida.com/terms');
+        break;
+      case 'Privacy Policy':
+        Linking.openURL('https://www.codingkida.com/privacy');
+        break;
       case 'Delete Account':
         router.push('/delete-account' as any);
         break;
@@ -246,6 +253,8 @@ export default function ProfileScreen() {
     { emoji: 'ℹ️', label: 'About Us', color: Colors.muted },
     { emoji: '⭐', label: 'Rate Us', color: Colors.warning },
     { emoji: '❤️', label: 'Help & Support', color: Colors.secondary },
+    { emoji: '📄', label: 'Terms & Conditions', color: Colors.muted },
+    { emoji: '🛡️', label: 'Privacy Policy', color: Colors.muted },
     { emoji: '🗑️', label: 'Delete Account', color: Colors.danger },
   ];
 
@@ -304,8 +313,9 @@ export default function ProfileScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.profileName} numberOfLines={1}>{user?.name ?? '—'}</Text>
             <Text style={styles.profileEmail} numberOfLines={1}>{user?.email ?? '—'}</Text>
-            <View style={styles.proBadge}>
-              <Text style={styles.proBadgeText}>Pro Member 👑</Text>
+            <View style={styles.badgeRow}>
+              {/* Profile status: Verified / Unverified (tap Unverified to verify) */}
+              <ProfileVerification variant="badge" />
             </View>
             <View style={styles.profileBtnRow}>
               <TouchableOpacity style={[styles.editProfileBtn, styles.viewProfileBtn]} onPress={() => router.push({ pathname: '/edit-profile', params: { mode: 'view' } })}>
@@ -519,6 +529,8 @@ const styles = StyleSheet.create({
     borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, marginBottom: 8,
   },
   proBadgeText: { color: '#9A6B00', fontSize: 11, fontWeight: '700' },
+  // "Pro Member" + "Verified/Unverified" side by side (wraps on narrow phones).
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 },
   editProfileBtn: {
     paddingHorizontal: 12, paddingVertical: 4,
     borderRadius: 50,

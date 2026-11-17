@@ -15,6 +15,11 @@ export interface Course {
   isActive: boolean;
   isEnrolled?: boolean;
   isFree?: boolean;
+  // 3-month access: end date (null = no end) and whether a past plan has run out.
+  accessEndsAt?: string | null;
+  accessExpired?: boolean;
+  // What "Unlock" buys, priced by the server (ZenAlpha bundle or this one subject).
+  purchase?: { plan: 'zenalpha' | 'course'; listPrice: number; offPercent: number; price: number; accessDays: number };
   // Real counts returned by the /api/courses list route (backend-computed).
   // lessonCount: total lessons across modules; totalDurationSeconds: summed
   // from stored per-lesson durations; enrolledStudents: real purchaser count.

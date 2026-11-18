@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView,
-  Keyboard, Platform, Linking,
+  Keyboard, Platform,
 } from 'react-native';
 import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +11,13 @@ import {
   validateName, validatePassword, isEmail, dobError, isMinor, cleanName, formatDobInput, PASSWORD_HINT,
 } from '@/utils/signupValidation';
 import { explainSignupError, type SignupField, type SignupProblem } from '@/utils/signupErrors';
+import { LegalAgreeModal, type LegalDoc } from '@/components/common/LegalAgreeModal';
+
+const CLASS_OPTIONS = [
+  'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6',
+  'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
+  'College', 'Other',
+];
 
 export default function SignupScreen() {
   const [name, setName] = useState('');
@@ -21,6 +28,12 @@ export default function SignupScreen() {
   const [parentName, setParentName] = useState('');
   const [parentEmail, setParentEmail] = useState('');
   const [parentPhone, setParentPhone] = useState('');
+  const [studentClass, setStudentClass] = useState('');
+  const [school, setSchool] = useState('');
+  // Unticked by default: the student must agree to the Terms and Privacy Policy themselves.
+  const [agreed, setAgreed] = useState(false);
+  // Which document the in-app "read the terms" window shows (null = closed).
+  const [legalDoc, setLegalDoc] = useState<LegalDoc | null>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const { signup, isLoading } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
@@ -85,6 +98,8 @@ export default function SignupScreen() {
     if (!dob.trim()) return fail({ message: 'Please enter your date of birth (DD-MM-YYYY).', field: 'dob' });
     const dobProblem = dobError(dob);
     if (dobProblem) return fail({ message: dobProblem, field: 'dob' });
+    if (!studentClass) return fail({ message: 'Select your class.', field: 'studentClass' });
+    if (school.trim().length < 2) return fail({ message: 'Enter your school name.', field: 'school' });
     if (minor) {
       if (!parentName.trim()) return fail({ message: "Enter your parent or guardian's name.", field: 'parentName' });
       if (!isEmail(parentEmail)) return fail({ message: "Enter your parent or guardian's email address.", field: 'parentEmail' });
@@ -95,6 +110,9 @@ export default function SignupScreen() {
         return fail({ message: "Enter your parent or guardian's 10-digit phone number.", field: 'parentPhone' });
       }
     }
+    if (!agreed) {
+      return fail({ message: 'Please read and accept the Terms & Conditions and Privacy Policy.', field: 'terms' });
+    }
     setProblem(null);
     try {
       await signup({
@@ -102,6 +120,9 @@ export default function SignupScreen() {
         email: email.trim(),
         password: password.trim(),
         dob: dob.trim(),
+        studentClass,
+        school: school.replace(/\s+/g, ' ').trim(),
+        acceptedTerms: true,
         ...(minor ? { parentName: cleanName(parentName), parentEmail: parentEmail.trim(), parentPhone: parentPhone.trim() } : {}),
       });
     } catch (err) {
@@ -144,13 +165,13 @@ export default function SignupScreen() {
             <Text style={styles.heroHighlight}>revolution</Text>
           </Text>
           <Text style={styles.heroDesc}>
-            50,000+ students are already learning. Start your journey today — free!
+            Learn coding with lessons, quizzes and real programs.
           </Text>
 
           {/* Card */}
           <View style={styles.card} onLayout={at('card')}>
             <Text style={styles.cardTitle}>Create Account</Text>
-            <Text style={styles.cardSubtitle}>Join CodingKida today — it's free</Text>
+            <Text style={styles.cardSubtitle}>It takes about a minute.</Text>
 
             {/* Name */}
             <View style={styles.formGroup} onLayout={at('name')}>
@@ -235,6 +256,45 @@ export default function SignupScreen() {
               {fieldError('dob')}
             </View>
 
+            {/* Class */}
+            <View style={styles.formGroup} onLayout={at('studentClass')}>
+              <Text style={styles.label}>Class</Text>
+              <View style={[styles.chipWrap, isBad('studentClass') && styles.chipWrapBad]}>
+                {CLASS_OPTIONS.map((c) => {
+                  const on = studentClass === c;
+                  return (
+                    <TouchableOpacity
+                      key={c}
+                      style={[styles.chip, on && styles.chipOn]}
+                      onPress={() => { setStudentClass(c); if (problem?.field === 'studentClass') setProblem(null); }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.chipText, on && styles.chipTextOn]}>{c}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {fieldError('studentClass')}
+            </View>
+
+            {/* School */}
+            <View style={styles.formGroup} onLayout={at('school')}>
+              <Text style={styles.label}>School name</Text>
+              <View style={[styles.inputWrapper, isBad('school') && styles.inputBad]}>
+                <Text style={styles.inputIcon}>🏫</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Your school or college"
+                  placeholderTextColor="#64748b"
+                  value={school}
+                  onChangeText={edit('school', setSchool)}
+                  autoCapitalize="words"
+                  maxLength={150}
+                />
+              </View>
+              {fieldError('school')}
+            </View>
+
             {/* Parent details — only for students under 18 */}
             {minor && (
               <View style={styles.parentBox} onLayout={at('parentBox')}>
@@ -300,31 +360,48 @@ export default function SignupScreen() {
               </View>
             )}
 
+            {/* Terms: the student must tick this themselves (not ticked by default) */}
+            <View onLayout={at('terms')}>
+              <View style={[styles.termsRow, isBad('terms') && styles.termsRowBad]}>
+                <TouchableOpacity
+                  onPress={() => { setAgreed((v) => !v); if (problem?.field === 'terms') setProblem(null); }}
+                  style={[styles.checkbox, agreed && styles.checkboxOn]}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: agreed }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  {agreed && <Text style={styles.checkMark}>✓</Text>}
+                </TouchableOpacity>
+                <Text style={styles.termsText}>
+                  I have read and agree to the{' '}
+                  <Text style={styles.consentLink} onPress={() => setLegalDoc('terms')}>Terms & Conditions</Text>
+                  {' '}and{' '}
+                  <Text style={styles.consentLink} onPress={() => setLegalDoc('privacy')}>Privacy Policy</Text>.
+                  {minor ? ' My parent or guardian will also confirm.' : ''}
+                </Text>
+              </View>
+              {fieldError('terms')}
+              <TouchableOpacity onPress={() => setLegalDoc('terms')} style={styles.readLink}>
+                <Text style={styles.readLinkText}>📄 Read the Terms & Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
+            <LegalAgreeModal
+              visible={legalDoc !== null}
+              initial={legalDoc ?? 'terms'}
+              onClose={() => setLegalDoc(null)}
+              onAgree={() => { setAgreed(true); if (problem?.field === 'terms') setProblem(null); }}
+            />
+
             {/* Signup Button */}
             <TouchableOpacity
-              style={[styles.signupBtn, isLoading && styles.btnDisabled]}
+              style={[styles.signupBtn, (isLoading || !agreed) && styles.btnDisabled]}
               onPress={handleSignup}
               disabled={isLoading}
             >
               <Text style={styles.signupBtnText}>
-                {isLoading ? '⏳ Creating account...' : '→  Create Free Account'}
+                {isLoading ? '⏳ Creating account...' : '→  Create Account'}
               </Text>
             </TouchableOpacity>
-
-            <Text style={styles.consentText}>
-              By creating an account you agree to our{' '}
-              <Text style={styles.consentLink} onPress={() => Linking.openURL('https://www.codingkida.com/terms')}>Terms</Text>
-              {' '}and{' '}
-              <Text style={styles.consentLink} onPress={() => Linking.openURL('https://www.codingkida.com/privacy')}>Privacy Policy</Text>.
-              If you are under 18, a parent or guardian must agree for you.
-            </Text>
-
-            {/* Trust bar */}
-            <View style={styles.trustBar}>
-              <Text style={styles.trustItem}>🔒 Secure</Text>
-              <Text style={styles.trustItem}>🆓 Free Forever</Text>
-              <Text style={styles.trustItem}>🎓 Certified</Text>
-            </View>
           </View>
 
           {/* Login link */}
@@ -393,13 +470,33 @@ const styles = StyleSheet.create({
     borderRadius: 10, padding: 12, marginBottom: 14,
   },
   problemText: { color: '#fecaca', fontSize: 13, lineHeight: 19 },
-  consentText: { fontSize: 12, color: '#94a3b8', lineHeight: 18, marginTop: 14, textAlign: 'center' },
-  consentLink: { color: '#818cf8', textDecorationLine: 'underline' },
+  consentLink: { color: '#a5b4fc', textDecorationLine: 'underline', fontWeight: '600' },
+  termsRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12, marginBottom: 14,
+    borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  termsRowBad: { borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.08)' },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: '#818cf8',
+    alignItems: 'center', justifyContent: 'center', marginTop: 1,
+  },
+  checkboxOn: { backgroundColor: '#6d28d9', borderColor: '#6d28d9' },
+  checkMark: { color: '#fff', fontSize: 14, fontWeight: '900', lineHeight: 16 },
+  termsText: { flex: 1, color: '#e2e8f0', fontSize: 13, lineHeight: 19 },
+  readLink: { alignSelf: 'flex-start', marginTop: -6, marginBottom: 14, paddingVertical: 4 },
+  readLinkText: { color: '#a5b4fc', fontSize: 12.5, fontWeight: '700' },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, borderRadius: 10, padding: 2 },
+  chipWrapBad: { borderWidth: 1.5, borderColor: '#f87171', padding: 6 },
+  chip: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 18,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  chipOn: { backgroundColor: '#6d28d9', borderColor: '#8b5cf6' },
+  chipText: { color: '#cbd5e1', fontSize: 13, fontWeight: '600' },
+  chipTextOn: { color: '#fff' },
   signupBtn: { backgroundColor: '#6d28d9', borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
   btnDisabled: { opacity: 0.6 },
   signupBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  trustBar: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 20 },
-  trustItem: { fontSize: 11, color: '#64748b' },
   loginRow: { flexDirection: 'row', justifyContent: 'center', paddingBottom: 16 },
   loginText: { color: '#94a3b8', fontSize: 13 },
   loginLink: { color: '#6366f1', fontSize: 13, fontWeight: '600' },

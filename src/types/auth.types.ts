@@ -26,6 +26,11 @@ export interface SignupPayload {
   parentName?: string;
   parentEmail?: string;
   parentPhone?: string;
+  /** e.g. "Class 8", "College". */
+  studentClass?: string;
+  school?: string;
+  /** The student ticked "I agree to the Terms & Conditions and Privacy Policy". */
+  acceptedTerms?: boolean;
 }
 
 /** Does this student need a verified parent, and what is done? (GET /api/student/consent) */

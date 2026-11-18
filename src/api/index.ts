@@ -12,6 +12,8 @@ export type { FinalTestAttemptSummary, FinalTestAttemptReview } from './finalTes
 export type { FinalTestStatus, FinalTestStart, FinalTestResult, FinalTestQuestion, FinalTestReviewItem, FinalTestCertificate } from './finalTest.api';
 export type { CodeRunResult, CodeSubmitResult, CodeTestCaseResult, SampleTestCase, CodeSubmission } from './code.api';
 export { homeworkApi } from './homework.api';
+export { weeklyCodingApi } from './weeklyCoding.api';
+export type { WeeklyCodingInfo, WeeklyCodingExercise, WeeklyCodingSubmitResult, WeeklyCodingBoard, WeeklyCodingBoardEntry } from './weeklyCoding.api';
 export { leaderboardApi, coinsApi, achievementsApi, aiMentorApi, weeklyStreakApi, progressApi, mediaApi, lessonApi, feedbackApi, lessonChatApi, lessonHelpApi, ttsApi, codoScriptsApi, attendanceApi } from './misc.api';
 export type { LessonReactionData, LessonReview, LessonReviewsData, LessonChatMessage, LessonChatData, AiSource, LessonHelpData, AttendanceDay } from './misc.api';
 export { referralApi } from './referral.api';

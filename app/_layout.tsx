@@ -360,6 +360,7 @@ export default function RootLayout() {
             <Stack.Screen name="edit-profile" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="parent-consent" options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
             <Stack.Screen name="payment-done" options={{ animation: 'none' }} />
+            <Stack.Screen name="weekly-challenge" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="leaderboard" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="watchlist" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />

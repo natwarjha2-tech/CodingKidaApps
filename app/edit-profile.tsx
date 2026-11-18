@@ -47,7 +47,8 @@ export default function EditProfileScreen() {
       const s = res.student;
       setName(s.name || '');
       setEmail(s.email || '');
-      setStudentName(s.studentName || '');
+      // Older accounts never saved a separate student name: show the name given at sign-up.
+      setStudentName(s.studentName || s.name || '');
       setStudentDob(s.studentDob || '');
       setStudentGrade(s.studentGrade || '');
       setStudentGender(s.studentGender || '');
@@ -181,25 +182,23 @@ export default function EditProfileScreen() {
           {/* Student Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>🎓 Student Information</Text>
-            <View style={styles.row}>
-              <View style={styles.fieldHalf}>
-                <Text style={styles.label}>Student Name</Text>
-                <TextInput style={inputStyle()} placeholder="Student's full name" placeholderTextColor={Colors.muted} value={studentName} onChangeText={setStudentName} editable={!viewOnly} />
-              </View>
-              <View style={styles.fieldHalf}>
-                <Text style={styles.label}>Date of Birth</Text>
-                <TextInput style={inputStyle()} placeholder="dd-mm-yyyy" placeholderTextColor={Colors.muted} value={studentDob} onChangeText={setStudentDob} editable={!viewOnly} />
-              </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Student Name</Text>
+              <TextInput style={inputStyle()} placeholder="Student's full name" placeholderTextColor={Colors.muted} value={studentName} onChangeText={setStudentName} editable={!viewOnly} />
             </View>
             <View style={styles.row}>
               <View style={styles.fieldHalf}>
-                <Text style={styles.label}>Grade/Class</Text>
-                <TextInput style={inputStyle()} placeholder="e.g. Class 10" placeholderTextColor={Colors.muted} value={studentGrade} onChangeText={setStudentGrade} editable={!viewOnly} />
+                <Text style={styles.label}>Date of Birth</Text>
+                <TextInput style={inputStyle()} placeholder="dd-mm-yyyy" placeholderTextColor={Colors.muted} value={studentDob} onChangeText={setStudentDob} editable={!viewOnly} />
               </View>
               <View style={styles.fieldHalf}>
                 <Text style={styles.label}>Gender</Text>
                 <TextInput style={inputStyle()} placeholder="Male/Female/Other" placeholderTextColor={Colors.muted} value={studentGender} onChangeText={setStudentGender} editable={!viewOnly} />
               </View>
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Class</Text>
+              <TextInput style={inputStyle()} placeholder="e.g. Class 8" placeholderTextColor={Colors.muted} value={studentGrade} onChangeText={setStudentGrade} editable={!viewOnly} />
             </View>
             <View style={styles.field}>
               <Text style={styles.label}>School Name</Text>
@@ -210,15 +209,18 @@ export default function EditProfileScreen() {
           {/* Parent/Guardian Information */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>👨‍👩‍👧 Parent/Guardian Information</Text>
-            <View style={styles.row}>
-              <View style={styles.fieldHalf}>
-                <Text style={styles.label}>Parent Name</Text>
-                <TextInput style={inputStyle()} placeholder="Parent full name" placeholderTextColor={Colors.muted} value={parentName} onChangeText={setParentName} editable={!viewOnly} />
-              </View>
-              <View style={styles.fieldHalf}>
-                <Text style={styles.label}>Parent Email</Text>
-                <TextInput style={inputStyle()} placeholder="parent@email.com" placeholderTextColor={Colors.muted} value={parentEmail} onChangeText={setParentEmail} keyboardType="email-address" autoCapitalize="none" editable={!viewOnly} />
-              </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>Parent Name</Text>
+              <TextInput style={inputStyle()} placeholder="Parent full name" placeholderTextColor={Colors.muted} value={parentName} onChangeText={setParentName} editable={!viewOnly} />
+            </View>
+            {/* Full width so a long email is never cut off */}
+            <View style={styles.field}>
+              <Text style={styles.label}>Parent Email</Text>
+              {viewOnly ? (
+                <Text style={[styles.input, styles.inputViewOnly, styles.viewText]} selectable>{parentEmail || '—'}</Text>
+              ) : (
+                <TextInput style={inputStyle()} placeholder="parent@email.com" placeholderTextColor={Colors.muted} value={parentEmail} onChangeText={setParentEmail} keyboardType="email-address" autoCapitalize="none" />
+              )}
             </View>
             <View style={styles.field}>
               <Text style={styles.label}>Parent Contact Number</Text>
@@ -324,6 +326,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent', borderColor: 'transparent',
     color: 'rgba(255,255,255,0.85)',
   },
+  viewText: { flexWrap: 'wrap' },
   hint: { color: Colors.muted, fontSize: 10, marginTop: 4 },
   consentBox: { marginTop: 4, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.border, gap: 8 },
   consentRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

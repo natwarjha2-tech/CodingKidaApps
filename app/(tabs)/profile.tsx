@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image, Animated, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -227,12 +227,6 @@ export default function ProfileScreen() {
       case 'Help & Support':
         router.push('/help-support');
         break;
-      case 'Terms & Conditions':
-        Linking.openURL('https://www.codingkida.com/terms');
-        break;
-      case 'Privacy Policy':
-        Linking.openURL('https://www.codingkida.com/privacy');
-        break;
       case 'Delete Account':
         router.push('/delete-account' as any);
         break;
@@ -253,8 +247,6 @@ export default function ProfileScreen() {
     { emoji: 'ℹ️', label: 'About Us', color: Colors.muted },
     { emoji: '⭐', label: 'Rate Us', color: Colors.warning },
     { emoji: '❤️', label: 'Help & Support', color: Colors.secondary },
-    { emoji: '📄', label: 'Terms & Conditions', color: Colors.muted },
-    { emoji: '🛡️', label: 'Privacy Policy', color: Colors.muted },
     { emoji: '🗑️', label: 'Delete Account', color: Colors.danger },
   ];
 

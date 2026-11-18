@@ -4,29 +4,40 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { useDashboard } from '@/hooks';
-import { leaderboardApi } from '@/api';
+import { leaderboardApi, weeklyCodingApi } from '@/api';
 import { Colors } from '@/theme';
 
 const rankMedals: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
+/** Pill id for the Weekly Coding Challenge board (not a course). */
+const WEEKLY = '__weekly__';
 
 export default function LeaderboardScreen() {
   const { data: dashData } = useDashboard();
   const enrolledCourses = dashData?.enrolledCourses ?? [];
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
 
-  // Set initial course only once when data first loads — prevents jump
+  // Set initial course only once when data first loads — prevents jump.
+  // No courses yet → show the Weekly Challenge board (open to everyone).
   useEffect(() => {
-    if (selectedCourseId === null && enrolledCourses.length > 0) {
-      setSelectedCourseId(enrolledCourses[0].id);
-    }
-  }, [enrolledCourses]);
+    if (selectedCourseId !== null) return;
+    if (enrolledCourses.length > 0) setSelectedCourseId(enrolledCourses[0].id);
+    else if (dashData) setSelectedCourseId(WEEKLY);
+  }, [enrolledCourses, dashData]);
 
-  const courseId = selectedCourseId ?? '';
+  const isWeekly = selectedCourseId === WEEKLY;
+  const courseId = isWeekly ? '' : selectedCourseId ?? '';
 
   const { data, isLoading } = useQuery({
     queryKey: ['leaderboard', courseId],
     queryFn: () => leaderboardApi.get(courseId),
     enabled: !!courseId,
+  });
+
+  const weekly = useQuery({
+    queryKey: ['weekly-coding-board'],
+    queryFn: () => weeklyCodingApi.leaderboard(),
+    enabled: isWeekly,
+    staleTime: 60_000,
   });
 
   const leaderboard = data?.leaderboard ?? [];
@@ -45,12 +56,18 @@ export default function LeaderboardScreen() {
 
       {/* Course Selector — fixed at top, no layout shift */}
       <View style={styles.pillsWrapper}>
-        {enrolledCourses.length > 0 && (
+        {(
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.pillsContainer}
           >
+            <TouchableOpacity
+              style={[styles.pill, isWeekly && styles.pillActive]}
+              onPress={() => setSelectedCourseId(WEEKLY)}
+            >
+              <Text style={[styles.pillText, isWeekly && styles.pillTextActive]} numberOfLines={1}>🔥 Weekly Challenge</Text>
+            </TouchableOpacity>
             {enrolledCourses.map((course) => (
               <TouchableOpacity
                 key={course.id}
@@ -76,7 +93,56 @@ export default function LeaderboardScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        {!courseId ? (
+        {isWeekly ? (
+          weekly.isLoading ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator color={Colors.primary} size="large" />
+              <Text style={styles.loadingText}>Loading this week's solvers...</Text>
+            </View>
+          ) : !weekly.data?.leaderboard?.length ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyEmoji}>💻</Text>
+              <Text style={styles.emptyTitle}>Nobody has solved it yet</Text>
+              <Text style={styles.emptyText}>Solve this week's coding challenge to be first and win 10 coins!</Text>
+              <TouchableOpacity style={styles.weeklyBtn} onPress={() => router.push('/weekly-challenge' as never)}>
+                <Text style={styles.weeklyBtnText}>Open Weekly Challenge</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              {weekly.data.currentUserRank && (
+                <View style={styles.currentUserCard}>
+                  <Text style={styles.currentUserLabel}>Your Rank this week</Text>
+                  <View style={styles.currentUserRow}>
+                    <Text style={styles.currentUserRank}>#{weekly.data.currentUserRank.rank}</Text>
+                    <Text style={styles.currentUserScore}>of {weekly.data.totalSolvers}</Text>
+                  </View>
+                </View>
+              )}
+              <Text style={styles.weeklyHint}>First to solve ranks first · weeks = challenges solved in total</Text>
+              {weekly.data.leaderboard.map((entry) => (
+                <View
+                  key={entry.rank}
+                  style={[styles.leaderboardRow, entry.rank <= 3 && styles.leaderboardRowTop3, entry.isCurrentUser && styles.leaderboardRowYou]}
+                >
+                  <View style={styles.rankWrap}>
+                    {entry.rank <= 3 ? <Text style={styles.rankMedal}>{rankMedals[entry.rank]}</Text> : <Text style={styles.rankNumber}>{entry.rank}</Text>}
+                  </View>
+                  <View style={styles.entryInfo}>
+                    <View style={styles.nameRow}>
+                      <Text style={styles.entryName} numberOfLines={1}>{entry.name || 'Student'}</Text>
+                      {entry.isCurrentUser && <View style={styles.youBadge}><Text style={styles.youBadgeText}>You</Text></View>}
+                    </View>
+                  </View>
+                  <Text style={styles.entryScore}>{entry.weeksSolved} wk{entry.weeksSolved === 1 ? '' : 's'}</Text>
+                </View>
+              ))}
+              <TouchableOpacity style={[styles.weeklyBtn, { alignSelf: 'center', marginTop: 12 }]} onPress={() => router.push('/weekly-challenge' as never)}>
+                <Text style={styles.weeklyBtnText}>Open this week's challenge</Text>
+              </TouchableOpacity>
+            </>
+          )
+        ) : !courseId ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>📚</Text>
             <Text style={styles.emptyTitle}>No courses enrolled</Text>
@@ -247,4 +313,7 @@ const styles = StyleSheet.create({
   },
   youBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   entryScore: { color: Colors.success, fontSize: 14, fontWeight: '700' },
+  weeklyHint: { color: Colors.muted, fontSize: 11.5, marginBottom: 10 },
+  weeklyBtn: { marginTop: 16, backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 11 },
+  weeklyBtnText: { color: '#fff', fontSize: 13.5, fontWeight: '800' },
 });

@@ -8,7 +8,7 @@ import { useCourseStore } from '@/store';
 import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll, usePrefetchNotifications } from '@/hooks';
 import { achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
-import { CodeArenaCard, DrawItCard } from '@/components/common/CodeArenaCard';
+import { CodeArenaCard } from '@/components/common/CodeArenaCard';
 import { ProfileVerification } from '@/components/common/ProfileVerification';
 import { Colors } from '@/theme';
 import type { Achievement } from '@/types';
@@ -232,6 +232,16 @@ export default function DashboardScreen() {
             <Text style={styles.topbarCoinsText}>{totalCoins}</Text>
           </TouchableOpacity>
 
+          {/* Leaderboard — beside the coins, like the desktop app */}
+          <TouchableOpacity
+            style={[styles.iconBtn, styles.iconBtnAmber]}
+            onPress={() => router.push('/leaderboard')}
+            activeOpacity={0.7}
+            accessibilityLabel="Leaderboard"
+          >
+            <Text style={styles.iconText}>🏆</Text>
+          </TouchableOpacity>
+
           {/* Refresh button — pulls latest data from server (bypasses cache) */}
           <TouchableOpacity
             style={styles.iconBtn}
@@ -381,7 +391,7 @@ export default function DashboardScreen() {
         )}
 
         {/* Weekly Challenge card (driven by weekly-streak data) */}
-        <View style={styles.wcCard}>
+        <TouchableOpacity style={styles.wcCard} activeOpacity={0.9} onPress={() => router.push('/weekly-challenge' as never)}>
           {/* CodingKida calendar art — right side, doesn't cover text */}
           <ImageBackground
             source={require('../../assets/demo-calendar.png')}
@@ -418,7 +428,8 @@ export default function DashboardScreen() {
             })}
           </View>
           <Text style={styles.streakFooter}>{streakFooter}</Text>
-        </View>
+          <Text style={styles.wcCta}>💻 This week's coding challenge: +10 coins  ›</Text>
+        </TouchableOpacity>
 
         {/* Recommended for You */}
         <View style={styles.sectionHeader}>
@@ -475,13 +486,7 @@ export default function DashboardScreen() {
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
         <CodeArenaCard />
-        <DrawItCard />
         <View style={styles.quickActions}>
-          <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.greenCard }]} onPress={() => router.push('/leaderboard')} activeOpacity={0.85}>
-            <Text style={styles.quickActionEmoji}>🏆</Text>
-            <Text style={styles.quickActionLabel} numberOfLines={1}>Leaderboard</Text>
-            <Text style={styles.quickActionChevron}>›</Text>
-          </TouchableOpacity>
           <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: L.blueSoft }]} onPress={() => router.push('/downloads')} activeOpacity={0.85}>
             <Text style={styles.quickActionEmoji}>📥</Text>
             <Text style={styles.quickActionLabel} numberOfLines={1}>Downloads</Text>
@@ -543,6 +548,8 @@ const styles = StyleSheet.create({
   topbarTagline: { fontSize: 10.5, fontWeight: '600', color: L.sub, marginTop: 1, letterSpacing: 0.3 },
   topbarActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: { position: 'relative', width: 34, height: 34, borderRadius: 12, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center' },
+  iconBtnAmber: { backgroundColor: L.amberSoft },
+  wcCta: { marginTop: 10, fontSize: 12.5, fontWeight: '800', color: L.purple },
   iconText: { fontSize: 17 },
   topbarCoins: {
     flexDirection: 'row', alignItems: 'center', gap: 4,

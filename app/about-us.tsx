@@ -120,15 +120,18 @@ export default function AboutUsScreen() {
           <Text style={styles.linkArrow}>›</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.linkItem} onPress={() => Linking.openURL('https://www.codingkida.com/privacy-policy').catch(() => {})}>
-          <Text style={styles.linkEmoji}>🔒</Text>
-          <Text style={styles.linkText}>Privacy Policy</Text>
-          <Text style={styles.linkArrow}>›</Text>
-        </TouchableOpacity>
+        {/* Legal: the one place for Terms and Privacy (also agreed to at sign-up) */}
+        <Text style={styles.linksTitle}>Legal</Text>
 
         <TouchableOpacity style={styles.linkItem} onPress={() => Linking.openURL('https://www.codingkida.com/terms').catch(() => {})}>
           <Text style={styles.linkEmoji}>📄</Text>
           <Text style={styles.linkText}>Terms & Conditions</Text>
+          <Text style={styles.linkArrow}>›</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.linkItem} onPress={() => Linking.openURL('https://www.codingkida.com/privacy').catch(() => {})}>
+          <Text style={styles.linkEmoji}>🔒</Text>
+          <Text style={styles.linkText}>Privacy Policy</Text>
           <Text style={styles.linkArrow}>›</Text>
         </TouchableOpacity>
 

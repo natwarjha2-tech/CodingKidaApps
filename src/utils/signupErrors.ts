@@ -5,7 +5,8 @@
  */
 
 export type SignupField =
-  | 'name' | 'email' | 'password' | 'dob' | 'parentName' | 'parentEmail' | 'parentPhone' | null;
+  | 'name' | 'email' | 'password' | 'dob' | 'studentClass' | 'school' | 'terms'
+  | 'parentName' | 'parentEmail' | 'parentPhone' | null;
 
 export interface SignupProblem {
   message: string;
@@ -21,6 +22,9 @@ export function fieldFromMessage(message: string): SignupField {
   if (m.includes('parent') && (m.includes('phone') || m.includes('number'))) return 'parentPhone';
   if (m.includes('parent') && m.includes('name')) return 'parentName';
   if (m.includes('date of birth')) return 'dob';
+  if (m.includes('terms')) return 'terms';
+  if (m.includes('school')) return 'school';
+  if (m.includes('class')) return 'studentClass';
   if (m.includes('password')) return 'password';
   if (m.includes('real name') || m.startsWith('name:')) return 'name';
   if (m.includes('email')) return 'email';

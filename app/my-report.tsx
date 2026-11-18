@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Share, Modal, Pressable } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, Pressable } from 'react-native';
 import { studentApi, type DayActivity } from '@/api/student.api';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -497,17 +497,6 @@ export default function MyReportScreen() {
             <Text style={{ color: refreshing ? Colors.muted : Colors.primary, fontSize: 13, fontWeight: '600' }}>
               {refreshing ? '⏳' : '🔄'}
             </Text>
-          </TouchableOpacity>
-          {/* Share */}
-          <TouchableOpacity
-            style={styles.headerActionBtn}
-            onPress={() => {
-              Share.share({
-                message: `📊 CodingKida Learning Report\n\n📚 Courses Enrolled: ${totalEnrolled}\n✅ Lessons Completed: ${totalVideosWatched}\n⏱ Today: ${AttendanceService.formatMins(todayMins)}\n📅 This Week: ${AttendanceService.formatMins(weekMins)}\n🏆 Achievements: ${achievements.length}\n🔥 Weekly Streak: ${streakCompletedCount}\n🪙 Coins: ${totalCoins}\n\n— CodingKida App`,
-              });
-            }}
-          >
-            <Text style={{ color: Colors.success, fontSize: 12, fontWeight: '600' }}>📤 Share</Text>
           </TouchableOpacity>
         </View>
       </View>

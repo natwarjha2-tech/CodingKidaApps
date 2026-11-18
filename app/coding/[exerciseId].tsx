@@ -19,15 +19,16 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Keyboard, Platform,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Keyboard, Platform, Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useExercise } from '@/hooks';
 import { useAuthStore } from '@/store';
 import {
-  codeApi, exerciseApi, leaderboardApi,
+  codeApi, exerciseApi, leaderboardApi, weeklyCodingApi,
   type CodeRunResult, type CodeSubmitResult, type SampleTestCase, type CodeSubmission,
 } from '@/api';
 import { XPService, XP_REWARDS } from '@/services';
@@ -86,15 +87,35 @@ function historyLabel(sub: CodeSubmission): { text: string; color: string } {
 }
 
 export default function CodingEditorScreen() {
-  const { exerciseId, lessonId, courseId } = useLocalSearchParams<{
-    exerciseId: string; lessonId?: string; courseId?: string;
+  const { exerciseId, lessonId: lessonParam, courseId: courseParam, weekly } = useLocalSearchParams<{
+    exerciseId: string; lessonId?: string; courseId?: string; weekly?: string;
   }>();
+  // Weekly Coding Challenge: the exercise comes from /api/weekly-coding and is
+  // checked by /api/weekly-coding/submit (10 coins once a week). No course needed.
+  const isWeekly = weekly === '1';
+  const lessonId = isWeekly ? undefined : lessonParam;
+  const courseId = isWeekly ? undefined : courseParam;
   const userId = useAuthStore((s) => s.user?.id);
-  const { data: exData, isLoading: exLoading } = useExercise(String(lessonId || ''));
-  const exercise = useMemo(
-    () => (exData?.exercises ?? []).find((e) => e.id === exerciseId) ?? null,
-    [exData, exerciseId]
-  );
+  const queryClient = useQueryClient();
+  const { data: exData, isLoading: lessonExLoading } = useExercise(String(lessonId || ''));
+  const { data: weeklyData, isLoading: weeklyLoading } = useQuery({
+    queryKey: ['weekly-coding'],
+    queryFn: () => weeklyCodingApi.get(),
+    enabled: isWeekly,
+    staleTime: 60_000,
+  });
+  const exLoading = isWeekly ? weeklyLoading : lessonExLoading;
+  const exercise = useMemo(() => {
+    if (isWeekly) {
+      const w = weeklyData?.exercise;
+      if (!w || w.id !== exerciseId) return null;
+      // Same shape the editor uses for lesson exercises.
+      return {
+        ...w, explanation: null, tags: null, timeComplexity: null, spaceComplexity: null,
+      } as unknown as NonNullable<typeof exData>['exercises'][number];
+    }
+    return (exData?.exercises ?? []).find((e) => e.id === exerciseId) ?? null;
+  }, [isWeekly, weeklyData, exData, exerciseId]);
 
   // ── Language (locked to the exercise's language, like desktop) ─────────────
   const lockedLang = exercise?.language && CODING_LANGUAGES.some((l) => l.id === exercise.language)
@@ -184,6 +205,14 @@ export default function CodingEditorScreen() {
   // ── Samples + history ──────────────────────────────────────────────────────
   const loadSamples = useCallback(async () => {
     if (!exerciseId) return;
+    if (isWeekly) {
+      // The weekly challenge brings its own sample tests.
+      const s = weeklyData?.exercise?.samples;
+      if (!s) { setSamplesState('loading'); return; }
+      setSamples(s.map((t, i) => ({ id: String(i), input: t.input, expectedOutput: t.expectedOutput, order: i })));
+      setSamplesState('ok');
+      return;
+    }
     setSamplesState('loading');
     try {
       const r = await codeApi.testCases(String(exerciseId));
@@ -192,7 +221,7 @@ export default function CodingEditorScreen() {
     } catch {
       setSamplesState('error');
     }
-  }, [exerciseId]);
+  }, [exerciseId, isWeekly, weeklyData]);
 
   const loadHistory = useCallback(async () => {
     if (!exerciseId) return;
@@ -278,7 +307,7 @@ export default function CodingEditorScreen() {
     setSubmitting(true);
 
     // No course context → legacy exercise check (desktop fallback path).
-    if (!courseId) {
+    if (!courseId && !isWeekly) {
       setSubmitView({ kind: 'busy', text: 'Checking...' });
       try {
         const res = await exerciseApi.submitAttempt({ exerciseId: exercise.id, code, courseId: '', language: lang });
@@ -294,6 +323,34 @@ export default function CodingEditorScreen() {
     }
 
     setSubmitView({ kind: 'busy', text: 'Running against test cases...' });
+    if (isWeekly) {
+      try {
+        const data = await weeklyCodingApi.submit({ exerciseId: exercise.id, source_code: code, language_id: langObj.judge0Id });
+        if (data?.success) {
+          setSubmitView({ kind: 'result', data });
+          if (data.passed) {
+            XPService.awardXP(`weekly-code:${weeklyData?.week.key ?? ''}`, XP_REWARDS.exerciseComplete);
+            queryClient.invalidateQueries({ queryKey: ['weekly-coding'] });
+            queryClient.invalidateQueries({ queryKey: ['weekly-coding-board'] });
+            queryClient.invalidateQueries({ queryKey: ['coins'] });
+            Alert.alert(
+              data.coinsAwarded ? `+${data.coinsAwarded} coins 🎉` : 'Solved ✅',
+              data.coinsAwarded
+                ? "You solved this week's coding challenge! See where you are on the Weekly Challenge leaderboard."
+                : "You already got this week's coins. A new challenge comes every Monday.",
+            );
+          }
+        } else {
+          setSubmitView({ kind: 'error', text: data?.message || 'Submission failed.' });
+        }
+      } catch (e) {
+        const msg = (e as Error)?.message || '';
+        setSubmitView({ kind: 'error', text: isConnErr(msg) || !msg ? 'Failed to connect. Check your internet and try again.' : msg });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       const data = await codeApi.submit({
         exerciseId: exercise.id, source_code: code, language_id: langObj.judge0Id, courseId: String(courseId),
@@ -315,7 +372,7 @@ export default function CodingEditorScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [exercise, courseId, lang, langObj.judge0Id, flushSave, fetchRank, loadHistory]);
+  }, [exercise, courseId, lang, langObj.judge0Id, flushSave, fetchRank, loadHistory, isWeekly, weeklyData, queryClient]);
 
   const clearOutput = () => { setRunView({ kind: 'idle' }); setSubmitView({ kind: 'idle' }); };
 
@@ -434,7 +491,10 @@ export default function CodingEditorScreen() {
       <SafeAreaView style={styles.container}>
         <Header title="Code Editor" onBack={() => router.back()} />
         <View style={styles.center}>
-          {exLoading || !lessonId ? (
+          {isWeekly ? (
+            weeklyLoading ? <ActivityIndicator color={Colors.primary} size="large" />
+              : <Text style={styles.muted}>This challenge has changed. Go back to see this week's challenge.</Text>
+          ) : exLoading || !lessonId ? (
             lessonId ? <ActivityIndicator color={Colors.primary} size="large" /> : <Text style={styles.muted}>Exercise not found.</Text>
           ) : (
             <Text style={styles.muted}>Exercise not found.</Text>

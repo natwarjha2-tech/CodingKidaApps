@@ -94,7 +94,7 @@ export default function StudentProgressScreen() {
                 <Text style={styles.ratingValue}>{data.overallRating}/5</Text>
               </View>
               <Text style={styles.overallMeta}>
-                Based on quiz accuracy (70%) + exercise completion (30%)
+                Based on quiz accuracy (50%) + exercise completion (50%)
               </Text>
               {/* Prominent Learning Score (mirrors desktop) — big number + bar */}
               <View style={styles.learningScoreBlock}>
@@ -224,7 +224,7 @@ export default function StudentProgressScreen() {
                               )}
                               {(lesson.achievements || []).map((a: any, i: number) => (
                                 <Text key={i} style={[styles.badge, { backgroundColor: 'rgba(251,191,36,0.15)', color: '#fbbf24' }]}>
-                                  {a.badgeType === 'super-master' ? '🏆' : a.badgeType === 'master' ? '🥈' : '⭐'}
+                                  {a.badgeType === 'super-master' ? '🥇' : a.badgeType === 'master' ? '🥈' : '🥉'}
                                 </Text>
                               ))}
                             </View>

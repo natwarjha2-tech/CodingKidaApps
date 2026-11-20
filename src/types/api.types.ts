@@ -73,14 +73,15 @@ export interface CoinsData {
 export interface Achievement {
   id: string;
   title: string;
-  badgeType: 'super-master' | 'master' | 'pro';
-  lessonId: string;
+  // Quiz: 'super-master' | 'master' | 'pro'. Coding: 'coding-gold' ... 'weekly-solver'.
+  badgeType: string;
+  lessonId?: string;
   lessonTitle?: string;
   moduleTitle?: string;
   courseId?: string;
   courseTitle?: string;
   score?: number;
-  rank?: number;
+  rank?: number | null;
   studentName?: string;
   instructor?: string;
   earnedAt?: string;

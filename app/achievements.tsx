@@ -10,6 +10,12 @@ const badgeEmoji: Record<string, string> = {
   'super-master': '🥇',
   master: '🥈',
   pro: '🥉',
+  'coding-gold': '🥇',
+  'coding-silver': '🥈',
+  'coding-bronze': '🥉',
+  'weekly-champion': '🏆',
+  'weekly-finalist': '🎖️',
+  'weekly-solver': '✅',
 };
 
 function formatDate(dateStr?: string): string {
@@ -54,7 +60,7 @@ export default function AchievementsScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>🏆</Text>
             <Text style={styles.emptyTitle}>No achievements yet</Text>
-            <Text style={styles.emptyText}>Complete quizzes to earn achievements!</Text>
+            <Text style={styles.emptyText}>Score 60% or more in quizzes and solve coding exercises to earn medals!</Text>
           </View>
         ) : (
           achievements.map((achievement) => (

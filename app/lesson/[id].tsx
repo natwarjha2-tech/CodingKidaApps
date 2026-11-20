@@ -16,6 +16,7 @@ import { LiveIcon } from '@/components/live/LiveIcons';
 import { CoinRewardToast } from '@/components/common/CoinRewardToast';
 import { CodoHelpButton, CodoAnswerCard } from '@/components/lesson/CodoHelp';
 import { CodoPromptModal } from '@/components/lesson/CodoPromptModal';
+import { LessonLeaderboardModal } from '@/components/lesson/LessonLeaderboardModal';
 import { getWatchlist, setWatchlist } from '@/utils/watchlist.util';
 import { getPlayCache, setPlayCache, getHlsAuthCache, setHlsAuthCache, type PlayData } from '@/utils/playCache.util';
 import { Colors, Spacing, Typography, FontWeight, Radius } from '@/theme';
@@ -56,6 +57,8 @@ export default function LessonScreen() {
   const [quizAttemptedBefore, setQuizAttemptedBefore] = useState(false);
   // Expanded full-screen quiz view (same content, Close returns to inline tab).
   const [quizExpanded, setQuizExpanded] = useState(false);
+  // Lesson leaderboard (🏆 under the video): quiz + coding-exercise boards for THIS lesson.
+  const [lessonBoardOpen, setLessonBoardOpen] = useState(false);
   // Once the student manually closes the expanded quiz, don't auto-reopen it
   // for this tab visit (so Close actually stays closed).
   const quizAutoOpenedRef = useRef(false);
@@ -1355,7 +1358,7 @@ export default function LessonScreen() {
           // source to avoid the wasted MP4 load).
           loading={!playData || !hlsAuthResolved}
           // Pause while the full-screen quiz is open; resumes when it closes.
-          paused={quizExpanded}
+          paused={quizExpanded || lessonBoardOpen}
           // One row under the video: likes / views | Quality | save / download / coins.
           leading={(
             <>
@@ -1393,6 +1396,15 @@ export default function LessonScreen() {
           )}
           trailing={(
             <>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => setLessonBoardOpen(true)}
+                hitSlop={6}
+                accessibilityLabel="Lesson leaderboard"
+              >
+                <Text style={styles.actionIcon}>🏆</Text>
+                <Text style={styles.actionLabel}>Ranks</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.actionBtn} onPress={saveToWatchlist} hitSlop={6}>
                 <LiveIcon
                   name={savedToWatchlist ? 'bookmarkFilled' : 'bookmark'}
@@ -1412,10 +1424,6 @@ export default function LessonScreen() {
                 <Text style={[styles.actionLabel, videoDownloaded && { color: Colors.success }]}>
                   {videoDownloaded ? 'Offline' : 'Download'}
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtn} onPress={() => setCoinsModalVisible(true)} hitSlop={6}>
-                <Text style={styles.actionIcon}>🪙</Text>
-                <Text style={styles.actionLabel}>{totalCoins}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -1968,6 +1976,13 @@ export default function LessonScreen() {
           pendingLeaveRef.current = null;
           if (leave) leave(); // resume the navigation we intercepted
         }}
+      />
+
+      <LessonLeaderboardModal
+        visible={lessonBoardOpen}
+        lessonId={String(lessonId ?? '')}
+        lessonTitle={activeLesson?.title}
+        onClose={() => setLessonBoardOpen(false)}
       />
 
       {/* Codo thank-you after the quiz is completed. Single dismiss button. */}

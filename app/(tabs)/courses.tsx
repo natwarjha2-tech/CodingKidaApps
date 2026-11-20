@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCourses, useCoins, useRefreshAll } from '@/hooks';
 import { coursesApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
+import { getUnreadCount } from '@/services/notification.service';
 import { formatCourseDuration, courseLessonCount, courseStudents } from '@/utils/course.util';
 
 // Light theme palette (UI only — consistent with Dashboard)
@@ -58,6 +59,8 @@ export default function CoursesScreen() {
   const { data: coinsData } = useCoins();
   const totalCoins = coinsData?.totalCoins ?? 0;
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
+  useEffect(() => { getUnreadCount().then(setNotifUnread).catch(() => {}); }, []);
   const queryClient = useQueryClient();
   const { refreshAll, refreshing, spin } = useRefreshAll();
 
@@ -98,10 +101,18 @@ export default function CoursesScreen() {
           <TouchableOpacity style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7} accessibilityLabel="Coins">
             <Text style={styles.coinTxt}>🪙 {totalCoins}</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconBtn, styles.iconBtnAmber]} onPress={() => router.push('/leaderboard')} activeOpacity={0.7} accessibilityLabel="Leaderboard">
+            <Text>🏆</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={refreshAll} disabled={refreshing} activeOpacity={0.7}>
             <Animated.Text style={{ transform: [{ rotate: spin }] }}>🔄</Animated.Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications"><Text>🔔</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications">
+            <Text>🔔</Text>
+            {notifUnread > 0 && (
+              <View style={styles.bellBadge}><Text style={styles.bellBadgeText}>{notifUnread > 99 ? '99+' : notifUnread}</Text></View>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -267,6 +278,9 @@ const styles = StyleSheet.create({
   topActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   coinPill: { backgroundColor: '#FFF3D6', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 },
   coinTxt: { fontSize: 12.5, fontWeight: '900', color: '#8A6D00' },
+  iconBtnAmber: { backgroundColor: '#FFF3DC' },
+  bellBadge: { position: 'absolute', top: -3, right: -3, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff' },
+  bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
   iconBtn: { width: 32, height: 32, borderRadius: 11, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center' },
 
   // Page header

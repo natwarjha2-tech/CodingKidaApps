@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ImageBackground, Image, Animated } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ImageBackground, Image, Animated, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store';
 import { useCourseStore } from '@/store';
-import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useWeeklyStreakSummary, useRefreshAll, usePrefetchNotifications } from '@/hooks';
-import { achievementsApi } from '@/api';
+import { useDashboard, useCoins, useCourses, usePrefetchDashboard, useRefreshAll, usePrefetchNotifications, useXP } from '@/hooks';
+import { achievementsApi, weeklyCodingApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
 import { CodeArenaCard } from '@/components/common/CodeArenaCard';
 import { ProfileVerification } from '@/components/common/ProfileVerification';
@@ -50,6 +51,7 @@ export default function DashboardScreen() {
   const { data: allCoursesData } = useCourses('All', '');
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
+  const [xpHowOpen, setXpHowOpen] = useState(false);
   const queryClient = useQueryClient();
   const lessonContext = useCourseStore((s) => s.lessonContext);
   const setActiveLesson = useCourseStore((s) => s.setActiveLesson);
@@ -80,10 +82,25 @@ export default function DashboardScreen() {
   const enrolledCount = data?.enrolledCount ?? 0;
   const totalCoins = coinsData?.totalCoins ?? 0;
 
-  // Coins-based level badge (mirrors desktop updateLevelBadge: floor(coins/50)+1)
-  const LEVEL_TITLES = ['Beginner', 'Starter', 'Junior Coder', 'Coder', 'Pro Coder', 'Expert', 'Master', 'Legend'];
-  const userLevel = Math.floor(totalCoins / 50) + 1;
-  const userLevelTitle = LEVEL_TITLES[Math.min(userLevel - 1, LEVEL_TITLES.length - 1)];
+  // Level badge: the SAME XP level as the profile (one level system everywhere).
+  // XP comes from lessons, quizzes and exercises (see XPService).
+  const xp = useXP();
+  const userLevel = xp.level.level;
+  const userLevelTitle = xp.level.title;
+
+  // Level up! — celebrate once when the server level goes up (first load only saves it).
+  const serverLevel = xp.server?.level;
+  useEffect(() => {
+    if (!serverLevel || !user?.id) return;
+    const key = `ck_last_level_${user.id}`;
+    AsyncStorage.getItem(key).then((saved) => {
+      const before = Number(saved) || 0;
+      if (before && serverLevel > before) {
+        Alert.alert('Level up! 🚀', `You reached Level ${serverLevel} · ${xp.level.title}. Keep learning to earn more XP!`);
+      }
+      if (serverLevel !== before) AsyncStorage.setItem(key, String(serverLevel)).catch(() => {});
+    }).catch(() => {});
+  }, [serverLevel, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // First name only for the welcome card (e.g. "Avinash Raj Anand" → "Avinash")
   const firstName = (user?.name?.trim().split(/\s+/)[0]) || 'Learner';
@@ -122,7 +139,6 @@ export default function DashboardScreen() {
     resumePct >= 70 ? { label: '🟠 Advanced', color: '#fdba74' } :
     resumePct >= 30 ? { label: '🟡 Intermediate', color: '#fde047' } :
     { label: '🟢 Beginner', color: '#6ee7b7' };
-  const resumeXp = resumePct >= 70 ? 50 : resumePct >= 30 ? 30 : 20;
   const resumeProgressText =
     resumePct >= 100 ? '🏆 Quest Complete!' :
     resumePct >= 90 ? `🔥 Almost done! ${resumePct}%` :
@@ -130,26 +146,23 @@ export default function DashboardScreen() {
     resumePct > 0 ? `⚡ Just started ${resumePct}%` :
     '🚀 Ready to start!';
 
-  // Weekly Challenge + streak pips (mirrors desktop)
-  const { data: streakSummary } = useWeeklyStreakSummary();
-  const streakCompleted = streakSummary?.completedCount ?? 0;
-  const streakTotal = streakSummary?.totalCount ?? 0;
-  const STREAK_GOAL = 7;
-  const filledPips = Math.min(streakCompleted, STREAK_GOAL);
-  const wcPercent = streakTotal > 0 ? Math.round((streakCompleted / streakTotal) * 100) : 0;
-  const wcDescription = streakTotal === 0
-    ? 'Enroll in a course to unlock coding challenges!'
-    : streakCompleted >= streakTotal
-      ? "All challenges completed! You're a champ! 🎉"
-      : `Complete ${streakTotal} coding challenges and earn 50 coins!`;
-  const wcReward = (streakCompleted >= streakTotal && streakTotal > 0)
-    ? '✅ 50 Coins earned!'
-    : '+50 Coins on completion';
-  const streakFooter = filledPips === 0
-    ? "Let's begin! 🔥"
-    : (STREAK_GOAL - filledPips) <= 0
-      ? 'Goal reached! 🎉'
-      : `${STREAK_GOAL - filledPips} days to goal`;
+  // Weekly Challenge card = this week's coding challenge (one program a week,
+  // +10 coins once). Shows "Completed this week" once solved.
+  const { data: weekly } = useQuery({
+    queryKey: ['weekly-coding'],
+    queryFn: () => weeklyCodingApi.get(),
+    staleTime: 60_000,
+  });
+  const wcDone = !!weekly?.completed;
+  const wcReward = weekly?.reward ?? 10;
+  const wcTitle = weekly?.exercise?.title ?? null;
+  const wcDescription = !weekly
+    ? 'Loading this week’s challenge…'
+    : !weekly.exercise
+      ? 'No challenge this week yet. Check back soon!'
+      : wcDone
+        ? `You solved “${wcTitle}”. A new challenge comes every Monday.`
+        : `Solve this week’s coding program: “${wcTitle}”`;
 
   // Fetch achievements to get latest badge
   const { data: achievementsData } = useQuery({
@@ -172,6 +185,12 @@ export default function DashboardScreen() {
     'super-master': '🥇',
     master: '🥈',
     pro: '🥉',
+    'coding-gold': '🥇',
+    'coding-silver': '🥈',
+    'coding-bronze': '🥉',
+    'weekly-champion': '🏆',
+    'weekly-finalist': '🎖️',
+    'weekly-solver': '✅',
   };
 
   // Open the Continue-Learning target. If the in-memory lesson context is set
@@ -299,40 +318,77 @@ export default function DashboardScreen() {
           </ImageBackground>
         </View>
 
+        {/* Level & XP — the one place for XP. XP = learning points; every 100 XP = 1 level. */}
+        <View style={styles.xpCard}>
+          <View style={styles.xpBlobA} />
+          <View style={styles.xpBlobB} />
+          <View style={styles.xpRow}>
+            <View style={styles.xpLevelCircle}>
+              <Text style={styles.xpLevelNum}>{xp.level.level}</Text>
+              <Text style={styles.xpLevelTiny}>LEVEL</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.xpLevelName} numberOfLines={1}>{xp.level.title}</Text>
+              <Text style={styles.xpTotal}>⭐ {xp.level.xp} XP earned</Text>
+            </View>
+          </View>
+          <View style={styles.xpBar}>
+            <View style={[styles.xpBarFill, { width: `${Math.max(4, xp.level.progressPct)}%` as any }]} />
+          </View>
+          <Text style={styles.xpNext}>
+            {xp.level.xp - xp.level.floor} / 100 XP · {xp.level.toNext} more XP to reach Level {xp.level.level + 1} 🚀
+          </Text>
+          <TouchableOpacity style={styles.xpHowRow} onPress={() => setXpHowOpen((v) => !v)} activeOpacity={0.7}>
+            <Text style={styles.xpHowTitle}>How to earn XP</Text>
+            <Text style={styles.xpHowArrow}>{xpHowOpen ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {xpHowOpen && (
+            <View style={styles.xpChips}>
+              <Text style={styles.xpChip}>🎬 Watch a video +{xp.server?.rewards.video ?? 10}</Text>
+              <Text style={styles.xpChip}>✅ Right quiz answer +{xp.server?.rewards.quizCorrect ?? 5}</Text>
+              <Text style={styles.xpChip}>🧠 Finish a quiz +{xp.server?.rewards.quizFinished ?? 20}</Text>
+              <Text style={styles.xpChip}>💻 Solve an exercise +{xp.server?.rewards.exercise ?? 30}</Text>
+              <Text style={styles.xpChip}>🔥 Weekly challenge +{xp.server?.rewards.weekly ?? 50}</Text>
+            </View>
+          )}
+        </View>
+
         {/* Stats Row — 2 thin cards in one row: Enrolled Courses + Latest Badge */}
         <View style={styles.statsGrid}>
           {/* Enrolled Courses */}
           <TouchableOpacity
-            style={styles.statCard}
+            style={[styles.statCard, styles.statCardBlue]}
             onPress={() => router.push('/enrolled-courses')}
-            activeOpacity={0.8}
+            activeOpacity={0.9}
           >
-            <View style={[styles.statIconWrap, { backgroundColor: L.purpleSoft }]}>
-              <Text style={styles.statEmoji}>📚</Text>
-            </View>
-            <View style={styles.statTextWrap}>
+            <View style={styles.statBlob} />
+            <View style={styles.statTop}>
+              <View style={styles.statIconWrap}>
+                <Text style={styles.statEmoji}>📚</Text>
+              </View>
               <Text style={styles.statValue}>{isLoading ? '—' : enrolledCount}</Text>
-              <Text style={styles.statLabel} numberOfLines={1}>Enrolled Courses</Text>
             </View>
-            <Text style={styles.statChevron}>›</Text>
+            <Text style={styles.statTitle} numberOfLines={2}>Enrolled Courses</Text>
+            <Text style={styles.statSub} numberOfLines={1}>Keep learning ›</Text>
           </TouchableOpacity>
 
           {/* Latest Achievement Badge */}
           <TouchableOpacity
             style={[styles.statCard, styles.statCardAmber]}
             onPress={() => router.push('/achievements')}
-            activeOpacity={0.8}
+            activeOpacity={0.9}
           >
-            <View style={[styles.statIconWrap, { backgroundColor: '#FCE4B8' }]}>
-              <Text style={styles.statEmoji}>{latestBadge ? (badgeEmoji[latestBadge.badgeType] || '🏅') : '🏆'}</Text>
+            <View style={styles.statBlob} />
+            <View style={styles.statTop}>
+              <View style={styles.statIconWrap}>
+                <Text style={styles.statEmoji}>{latestBadge ? (badgeEmoji[latestBadge.badgeType] || '🏅') : '🏆'}</Text>
+              </View>
+              <Text style={styles.statValue}>{achievements.length}</Text>
             </View>
-            <View style={styles.statTextWrap}>
-              <Text style={styles.latestBadgeTitle} numberOfLines={1}>
-                {latestBadge ? latestBadge.title : 'No Badges Yet'}
-              </Text>
-              <Text style={styles.statLabel} numberOfLines={1}>{latestBadge ? 'Latest Badge' : 'Earn your first badge!'}</Text>
-            </View>
-            <Text style={styles.statChevron}>›</Text>
+            <Text style={styles.statTitle} numberOfLines={2}>My Achievements</Text>
+            <Text style={styles.statSub} numberOfLines={1}>
+              {latestBadge ? `Latest: ${latestBadge.title}` : 'Earn your first badge!'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -352,9 +408,6 @@ export default function DashboardScreen() {
           <>
             <View style={styles.continueHeader}>
               <Text style={styles.continueHeaderTitle}>Continue Learning ⚡</Text>
-              <View style={styles.continueXpChip}>
-                <Text style={styles.continueXpChipText}>⭐ Earn +{resumeXp} XP</Text>
-              </View>
             </View>
             <TouchableOpacity
               style={styles.continueCard}
@@ -390,7 +443,7 @@ export default function DashboardScreen() {
           </>
         )}
 
-        {/* Weekly Challenge card (driven by weekly-streak data) */}
+        {/* Weekly Challenge card (this week's coding challenge) */}
         <TouchableOpacity style={styles.wcCard} activeOpacity={0.9} onPress={() => router.push('/weekly-challenge' as never)}>
           {/* CodingKida calendar art — right side, doesn't cover text */}
           <ImageBackground
@@ -400,35 +453,20 @@ export default function DashboardScreen() {
           />
           <View style={styles.wcHeader}>
             <Text style={styles.wcTitle}>🔥 Weekly Challenge</Text>
-            <Text style={styles.wcProgressText}>{streakCompleted} / {streakTotal}</Text>
+            <Text style={styles.wcProgressText}>{wcDone ? '✅ Done' : '0 / 1'}</Text>
           </View>
           <View style={styles.wcProgressBarWrap}>
             <View style={styles.wcProgressBar}>
-              <View style={[styles.wcProgressFill, { width: `${wcPercent}%` as any }]} />
+              <View style={[styles.wcProgressFill, { width: wcDone ? '100%' : '0%' }]} />
             </View>
           </View>
           <Text style={styles.wcDescription}>{wcDescription}</Text>
-          <Text style={styles.wcReward}>{wcReward}</Text>
-
-          {/* 7-day streak pips */}
-          <View style={styles.streakPipsRow}>
-            {Array.from({ length: STREAK_GOAL }, (_, i) => {
-              const isFilled = i < filledPips;
-              const isNext = i === filledPips && filledPips < STREAK_GOAL;
-              return (
-                <View
-                  key={i}
-                  style={[
-                    styles.streakPip,
-                    isFilled && styles.streakPipFilled,
-                    isNext && styles.streakPipNext,
-                  ]}
-                />
-              );
-            })}
-          </View>
-          <Text style={styles.streakFooter}>{streakFooter}</Text>
-          <Text style={styles.wcCta}>💻 This week's coding challenge: +10 coins  ›</Text>
+          <Text style={styles.wcReward}>
+            {wcDone
+              ? `${weekly?.medal ? `${weekly.medal.icon} ${weekly.medal.label}` : '✅'} · Completed this week · ${weekly?.coinsEarned ?? 0} coins earned`
+              : `🪙 Up to ${wcReward} coins + ${weekly?.xp ?? 50} XP when you solve it`}
+          </Text>
+          <Text style={styles.wcCta}>{wcDone ? 'See this week’s solvers  ›' : 'Start coding  ›'}</Text>
         </TouchableOpacity>
 
         {/* Recommended for You */}
@@ -549,6 +587,38 @@ const styles = StyleSheet.create({
   topbarActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconBtn: { position: 'relative', width: 34, height: 34, borderRadius: 12, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center' },
   iconBtnAmber: { backgroundColor: L.amberSoft },
+  // Level & XP card
+  xpCard: {
+    marginHorizontal: 16, marginTop: 4, marginBottom: 14, padding: 16, borderRadius: 24, overflow: 'hidden',
+    backgroundColor: '#F3F1FB', borderWidth: 1.5, borderColor: '#DDD6F7',
+    shadowColor: '#6538FF', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2,
+  },
+  xpBlobA: { position: 'absolute', width: 130, height: 130, borderRadius: 65, right: -40, top: -50, backgroundColor: 'rgba(101,56,255,0.07)' },
+  xpBlobB: { position: 'absolute', width: 80, height: 80, borderRadius: 40, left: -25, bottom: -35, backgroundColor: 'rgba(255,196,0,0.14)' },
+  xpRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  xpLevelCircle: {
+    width: 56, height: 56, borderRadius: 28, backgroundColor: L.purple, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: '#FFC400',
+  },
+  xpLevelNum: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', lineHeight: 24 },
+  xpLevelTiny: { color: '#FFFFFF', fontSize: 7.5, fontWeight: '900', letterSpacing: 0.8, marginTop: -1 },
+  xpLevelName: { fontSize: 18, fontWeight: '900', color: '#5B2EF0' },
+  xpTotal: { fontSize: 12.5, fontWeight: '700', color: '#5C6680', marginTop: 2 },
+  xpBar: { height: 12, borderRadius: 8, backgroundColor: '#E2DCF7', overflow: 'hidden', marginTop: 14 },
+  xpBarFill: { height: '100%', borderRadius: 8, backgroundColor: L.purple },
+  xpNext: { fontSize: 12, fontWeight: '700', color: '#5C6680', marginTop: 8, lineHeight: 17 },
+  xpHowRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12,
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#E8E4F6',
+  },
+  xpHowTitle: { fontSize: 12.5, fontWeight: '800', color: '#5B2EF0' },
+  xpHowArrow: { fontSize: 11, fontWeight: '800', color: '#5C6680' },
+  xpChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  xpChip: {
+    fontSize: 11.5, fontWeight: '800', color: '#4B3FA0', backgroundColor: '#FFFFFF',
+    borderRadius: 12, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden', borderWidth: 1, borderColor: '#E8E4F6',
+  },
   wcCta: { marginTop: 10, fontSize: 12.5, fontWeight: '800', color: L.purple },
   iconText: { fontSize: 17 },
   topbarCoins: {
@@ -602,23 +672,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: 16, gap: 12, marginTop: 8, marginBottom: 20,
   },
+  // Chunky, game-style tiles (bright colour + thick "pressable" bottom edge)
   statCard: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#F3F1FB',
-    borderRadius: 16, paddingVertical: 12, paddingHorizontal: 12,
-    borderWidth: 1, borderColor: '#E8E4F6',
+    flex: 1, minHeight: 130, borderRadius: 24, padding: 14, justifyContent: 'space-between', overflow: 'hidden',
+    borderWidth: 0, borderBottomWidth: 6,
   },
-  statCardAmber: { backgroundColor: L.amberSoft, borderColor: '#F6E4C0' },
+  statCardBlue: { backgroundColor: '#3B82F6', borderBottomColor: '#2058C9' },
+  statCardAmber: { backgroundColor: '#FFA928', borderBottomColor: '#D9820A' },
+  statBlob: {
+    position: 'absolute', width: 96, height: 96, borderRadius: 48, right: -28, top: -30,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  statTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   statIconWrap: {
-    width: 38, height: 38, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
+    width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
   },
-  statTextWrap: { flex: 1, minWidth: 0 },
-  statEmoji: { fontSize: 18 },
-  statValue: { fontSize: 20, fontWeight: '900', color: L.ink },
-  statLabel: { fontSize: 10.5, color: L.sub, fontWeight: '600', marginTop: 1 },
-  statChevron: { fontSize: 18, color: L.sub, fontWeight: '300' },
-  latestBadgeTitle: { fontSize: 12.5, fontWeight: '800', color: L.ink },
+  statEmoji: { fontSize: 26 },
+  statValue: { fontSize: 38, fontWeight: '900', color: '#FFFFFF', letterSpacing: -0.5 },
+  statTitle: { fontSize: 15, fontWeight: '900', color: '#FFFFFF', marginTop: 10 },
+  statSub: {
+    alignSelf: 'flex-start', marginTop: 6, fontSize: 11.5, fontWeight: '800', color: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.28)', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 3, overflow: 'hidden',
+  },
 
   // Continue Learning Card
   continueCard: {
@@ -705,7 +781,7 @@ const styles = StyleSheet.create({
   wcProgressBar: { height: 8, backgroundColor: '#D3EEDC', borderRadius: 50, overflow: 'hidden', marginBottom: 10 },
   wcProgressFill: { height: '100%', backgroundColor: L.green, borderRadius: 50 },
   wcDescription: { color: '#5A6B60', fontSize: 12.5, fontWeight: '500', lineHeight: 18, marginBottom: 4, maxWidth: '66%' },
-  wcReward: { color: '#C2830B', fontSize: 12.5, fontWeight: '800', marginBottom: 12 },
+  wcReward: { color: '#C2830B', fontSize: 12.5, fontWeight: '800', lineHeight: 18, marginBottom: 12, maxWidth: '64%' },
   streakPipsRow: { flexDirection: 'row', gap: 6, marginBottom: 10, maxWidth: '64%' },
   streakPip: {
     flex: 1, height: 8, borderRadius: 5,

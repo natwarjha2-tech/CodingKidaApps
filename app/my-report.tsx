@@ -23,9 +23,9 @@ const badgeEmoji: Record<string, string> = {
 };
 
 const badgeLabel: Record<string, string> = {
-  'super-master': 'Super Master',
-  master: 'Master',
-  pro: 'Pro',
+  'super-master': 'Quiz Gold',
+  master: 'Quiz Silver',
+  pro: 'Quiz Bronze',
 };
 
 function formatDate(dateStr?: string): string {
@@ -646,17 +646,6 @@ export default function MyReportScreen() {
               </View>
             </View>
 
-            {/* Next Coding Mission */}
-            <View style={styles.missionCard}>
-              <Text style={styles.missionLabel}>🎯 NEXT CODING MISSION</Text>
-              <Text style={styles.missionSub}>{motivation.missionSub}</Text>
-              <Text style={styles.missionText}>{motivation.missionText}</Text>
-              <View style={styles.missionBarBg}>
-                <View style={[styles.missionBarFill, { width: `${motivation.missionProgress}%` }]} />
-              </View>
-              <Text style={styles.missionProgressText}>{motivation.thisWeekDays} / {motivation.nextGoal} days this week</Text>
-            </View>
-
             {/* Weekly report → parent's WhatsApp */}
             <ParentReportCard report={parentReport} fallbackName={authName || ''} />
 
@@ -770,62 +759,6 @@ export default function MyReportScreen() {
               </>
             )}
 
-            {/* ═══════════ WEEKLY STREAK SECTION ═══════════ */}
-            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>🔥 Weekly Streak</Text>
-            {streakLoading ? (
-              <ActivityIndicator color={Colors.primary} style={{ marginVertical: 16 }} />
-            ) : (
-              <>
-                <View style={styles.streakSummary}>
-                  <Text style={styles.streakSummaryEmoji}>🔥</Text>
-                  <Text style={styles.streakSummaryValue}>{streakCompletedCount}</Text>
-                  <Text style={styles.streakSummaryLabel}>challenges completed</Text>
-                </View>
-
-                {streaks.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyEmoji}>⏳</Text>
-                    <Text style={styles.emptyText}>No streak challenges yet.</Text>
-                  </View>
-                ) : (
-                  streaks.slice(0, 10).map((streak: any) => (
-                    <View key={streak.id} style={styles.streakCard}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.streakWeek}>Week {streak.weekNumber}</Text>
-                        <Text style={styles.streakTitle}>{streak.title}</Text>
-                        <Text style={styles.streakCourse}>{streak.courseTitle}</Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.streakBadge,
-                          {
-                            backgroundColor: streak.completed
-                              ? Colors.successLight
-                              : Colors.warningLight,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.streakBadgeText,
-                            { color: streak.completed ? Colors.success : Colors.warning },
-                          ]}
-                        >
-                          {streak.completed ? '✅ PASS' : '⏳ Pending'}
-                        </Text>
-                      </View>
-                    </View>
-                  ))
-                )}
-
-                {streaks.length > 10 && (
-                  <TouchableOpacity style={styles.viewAllBtn} onPress={() => router.push('/streak-history')}>
-                    <Text style={styles.viewAllText}>View All ({streaks.length}) →</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-
             {/* ═══════════ MY COINS SECTION ═══════════ */}
             <Text style={[styles.sectionTitle, { marginTop: 24 }]}>🪙 My Coins</Text>
             {coinsFullLoading ? (
@@ -842,7 +775,7 @@ export default function MyReportScreen() {
                 <Text style={styles.subsectionTitle}>Recent Rewards</Text>
                 {transactions.length === 0 ? (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyText}>No rewards yet. Complete quizzes to earn coins!</Text>
+                    <Text style={styles.emptyText}>No rewards yet. Solve quizzes and coding exercises to earn coins!</Text>
                   </View>
                 ) : (
                   transactions.map((tx: any, i: number) => {

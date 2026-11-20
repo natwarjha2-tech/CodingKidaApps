@@ -64,13 +64,15 @@ export default function WeeklyChallengeScreen() {
               <View style={styles.tags}>
                 {!!ex.language && <Text style={styles.tag}>{LANG_LABEL[ex.language] || ex.language}</Text>}
                 <Text style={[styles.tag, { color: DIFF_COLOR[diff] || '#f59e0b', borderColor: (DIFF_COLOR[diff] || '#f59e0b') + '66' }]}>{diff}</Text>
-                <Text style={[styles.tag, styles.coinTag]}>🪙 +{data.reward} coins</Text>
+                <Text style={[styles.tag, styles.coinTag]}>🪙 up to {data.reward} coins · +{data.xp ?? 50} XP</Text>
               </View>
               <Text style={styles.desc} numberOfLines={6}>{ex.description}</Text>
 
               {data.completed ? (
                 <View style={styles.doneBox}>
-                  <Text style={styles.doneText}>✅ Solved this week! You earned {data.reward} coins.</Text>
+                  <Text style={styles.doneText}>
+                    {data.medal ? `${data.medal.icon} ${data.medal.label}` : '✅ Solved'} this week! You earned {data.coinsEarned ?? 0} coins and {data.xp ?? 50} XP.
+                  </Text>
                   <TouchableOpacity onPress={start}><Text style={styles.link}>Open the code again →</Text></TouchableOpacity>
                 </View>
               ) : (
@@ -78,7 +80,13 @@ export default function WeeklyChallengeScreen() {
                   <Text style={styles.startText}>Start coding ▶</Text>
                 </TouchableOpacity>
               )}
-              <Text style={styles.note}>Pass every test case to win. A new challenge comes every Monday.</Text>
+              <View style={styles.tiers}>
+                <Text style={styles.tiersHead}>Pass every test case to win a medal:</Text>
+                <Text style={styles.tierLine}>🏆 1st · Weekly Champion · {data.rewards?.champion ?? 15} coins</Text>
+                <Text style={styles.tierLine}>🎖️ 2nd–3rd · Weekly Finalist · {data.rewards?.finalist ?? 10} coins</Text>
+                <Text style={styles.tierLine}>✅ Everyone else · Weekly Solver · {data.rewards?.solver ?? 5} coins</Text>
+                <Text style={styles.note}>A new challenge comes every Monday.</Text>
+              </View>
             </View>
 
             {/* This week's leaderboard */}
@@ -133,13 +141,16 @@ const styles = StyleSheet.create({
     color: '#c4b5fd', fontSize: 11.5, fontWeight: '700', borderWidth: 1, borderColor: 'rgba(196,181,253,0.4)',
     borderRadius: 10, paddingHorizontal: 9, paddingVertical: 3, overflow: 'hidden', textTransform: 'capitalize',
   },
-  coinTag: { color: '#fbbf24', borderColor: 'rgba(251,191,36,0.5)', textTransform: 'none' },
+  coinTag: { color: '#fbbf24', borderColor: 'rgba(251,191,36,0.5)', textTransform: 'none', flexShrink: 1, lineHeight: 17, paddingVertical: 4 },
   desc: { color: '#e2e8f0', fontSize: 13.5, lineHeight: 20, marginBottom: 16 },
   startBtn: { backgroundColor: Colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   startText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   doneBox: { backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 12, padding: 12, gap: 6 },
   doneText: { color: '#4ade80', fontSize: 13.5, fontWeight: '700' },
   link: { color: '#a78bfa', fontSize: 13, fontWeight: '700' },
+  tiers: { marginTop: 14, gap: 5 },
+  tiersHead: { color: '#e2e8f0', fontSize: 12.5, fontWeight: '700', marginBottom: 2 },
+  tierLine: { color: '#cbd5e1', fontSize: 12.5, lineHeight: 18 },
   note: { color: Colors.muted, fontSize: 11.5, marginTop: 10, textAlign: 'center' },
   section: { color: '#fff', fontSize: 16, fontWeight: '800', marginBottom: 10 },
   myRank: { color: '#a78bfa', fontSize: 13, fontWeight: '700', marginBottom: 8 },

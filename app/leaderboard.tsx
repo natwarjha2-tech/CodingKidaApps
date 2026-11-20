@@ -157,10 +157,13 @@ export default function LeaderboardScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyEmoji}>🏆</Text>
             <Text style={styles.emptyTitle}>No leaderboard data yet</Text>
-            <Text style={styles.emptyText}>Complete quizzes to appear on the leaderboard!</Text>
+            <Text style={styles.emptyText}>No students are enrolled in this course yet.</Text>
           </View>
         ) : (
           <>
+            <Text style={styles.weeklyHint}>
+              All students in this course, ranked by learning score (quizzes + coding exercises, same as Student Progress).
+            </Text>
             {/* Current User Rank Highlight */}
             {currentUserRank && (
               <View style={styles.currentUserCard}>
@@ -207,6 +210,11 @@ export default function LeaderboardScreen() {
                         </View>
                       )}
                     </View>
+                    {entry.quizAccuracy !== undefined && (
+                      <Text style={styles.entryMeta} numberOfLines={1}>
+                        📘 Quiz {entry.quizAccuracy}% · 💻 Exercises {entry.exerciseRate ?? 0}% · 🎬 {entry.progressPercent ?? 0}% watched
+                      </Text>
+                    )}
                   </View>
                   <Text style={styles.entryScore}>
                     {entry.scorePercent ?? entry.score ?? 0}%
@@ -305,6 +313,7 @@ const styles = StyleSheet.create({
   entryInfo: { flex: 1 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   entryName: { color: '#fff', fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  entryMeta: { color: Colors.muted, fontSize: 11, marginTop: 3 },
   youBadge: {
     backgroundColor: Colors.primary,
     borderRadius: 8,

@@ -5,12 +5,13 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
-import { useAuth, useXP, useDashboard, useCoins, useWeeklyStreakCount, useRefreshAll } from '@/hooks';
+import { useAuth, useDashboard, useCoins, useWeeklyStreakCount, useRefreshAll } from '@/hooks';
 import { useAuthStore } from '@/store';
 import { StorageService, USER_KEY } from '@/services/storage.service';
 import { Colors } from '@/theme';
 import { apiClient, studentApi, achievementsApi } from '@/api';
 import { CoinsModal } from '@/components/common/CoinsModal';
+import { getUnreadCount } from '@/services/notification.service';
 import { ProfileVerification } from '@/components/common/ProfileVerification';
 import type { Achievement } from '@/types';
 
@@ -32,12 +33,13 @@ export default function ProfileScreen() {
   const token = useAuthStore((s) => s.token);
   const updateUser = useAuthStore((s) => s.updateUser);
   const queryClient = useQueryClient();
-  const xp = useXP(); // frontend gamification: level, XP, badges, streak
 
   // Real backend data for top bar + weekly streak tile
   const { data: coinsData } = useCoins();
   const totalCoins = coinsData?.totalCoins ?? 0;
   const [coinsModalVisible, setCoinsModalVisible] = useState(false);
+  const [notifUnread, setNotifUnread] = useState(0);
+  useEffect(() => { getUnreadCount().then(setNotifUnread).catch(() => {}); }, []);
   const { data: weeklyStreak } = useWeeklyStreakCount();
   const { refreshAll, refreshing, spin } = useRefreshAll();
 
@@ -196,10 +198,6 @@ export default function ProfileScreen() {
 
   const handleMenuPress = (label: string) => {
     switch (label) {
-      // TEMP: design preview — remove after a design is chosen.
-      case 'Design Demos':
-        router.push('/design-demos' as any);
-        break;
       case 'Change Password':
         router.push('/change-password');
         break;
@@ -235,9 +233,7 @@ export default function ProfileScreen() {
     }
   };
 
-  const menuItems = [
-    // TEMP: design preview entry — remove after a design is chosen.
-    { emoji: '🎨', label: 'Design Demos', color: Colors.secondary },
+  const menuItems: { emoji: string; label: string; color: string; count?: number }[] = [
     { emoji: '📊', label: 'My Report', color: Colors.primary },
     { emoji: '📈', label: 'Student Progress', color: Colors.success },
     { emoji: '🛒', label: 'My Purchases', color: Colors.warning },
@@ -266,10 +262,18 @@ export default function ProfileScreen() {
           <TouchableOpacity style={styles.coinPill} onPress={() => setCoinsModalVisible(true)} activeOpacity={0.7} accessibilityLabel="Coins">
             <Text style={styles.coinTxt}>🪙 {totalCoins}</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconBtn, styles.iconBtnAmber]} onPress={() => router.push('/leaderboard')} activeOpacity={0.7} accessibilityLabel="Leaderboard">
+            <Text>🏆</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn} onPress={refreshAll} disabled={refreshing} activeOpacity={0.7}>
             <Animated.Text style={{ transform: [{ rotate: spin }] }}>🔄</Animated.Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications"><Text>🔔</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/notifications')} activeOpacity={0.7} accessibilityLabel="Notifications">
+            <Text>🔔</Text>
+            {notifUnread > 0 && (
+              <View style={styles.bellBadge}><Text style={styles.bellBadgeText}>{notifUnread > 99 ? '99+' : notifUnread}</Text></View>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -329,52 +333,6 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* XP Hero — Level, motivational line, goal pill, progress */}
-        <View style={styles.xpHero}>
-          <View style={styles.xpTopRow}>
-            <View style={styles.xpShield}>
-              <Text style={styles.xpShieldNum}>{String(xp.level.level).padStart(2, '0')}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.xpLevelTitle}>{xp.level.title}</Text>
-              <Text style={styles.xpLevelSub}>Keep learning, you're doing great!</Text>
-            </View>
-            {xp.level.next && (
-              <View style={styles.xpGoal}>
-                <Text style={styles.xpGoalText}>🎯 {xp.level.toNext} XP to Level {xp.level.next.level}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.xpBarBg}>
-            <View style={[styles.xpBarFill, { width: `${xp.level.progressPct}%` as any }]} />
-          </View>
-          <View style={styles.xpBarLabels}>
-            <Text style={styles.xpBarText}>{xp.level.xp} / {xp.level.next ? xp.level.ceil : xp.level.xp} XP</Text>
-            <Text style={styles.xpBarText}>{xp.level.progressPct}%</Text>
-          </View>
-        </View>
-
-        {/* 3 stat tiles — Learning / Badges / Weekly Streak (real data) */}
-        <View style={styles.tilesRow}>
-          <View style={[styles.tile, { backgroundColor: L.blueSoft }]}>
-            <Text style={styles.tileEmoji}>📘</Text>
-            <Text style={[styles.tileVal, { color: L.blue }]}>{enrolledCourses.length}</Text>
-            <Text style={styles.tileLabel}>Learning</Text>
-          </View>
-          <View style={[styles.tile, { backgroundColor: L.amberSoft }]}>
-            <Text style={styles.tileEmoji}>🏆</Text>
-            {/* Real earned badges from the backend achievements (same source as
-                the Achievements section below), not the local XP gamification. */}
-            <Text style={[styles.tileVal, { color: L.amber }]}>{achievements.length}</Text>
-            <Text style={styles.tileLabel}>Badges</Text>
-          </View>
-          <View style={[styles.tile, { backgroundColor: L.pinkSoft }]}>
-            <Text style={styles.tileEmoji}>🔥</Text>
-            <Text style={[styles.tileVal, { color: L.pink }]}>{weeklyStreak ?? 0}</Text>
-            <Text style={styles.tileLabel}>Weekly Streak</Text>
-          </View>
-        </View>
-
         {/* Enrolled Courses & Achievements previews removed here — they already
             live on the Dashboard, so showing them again on Profile was a
             duplicate. The "Learning"/"Badges" stat tiles above still summarise
@@ -392,6 +350,9 @@ export default function ProfileScreen() {
                   <Text style={styles.menuEmoji}>{item.emoji}</Text>
                 </View>
                 <Text style={styles.menuLabel}>{item.label}</Text>
+                {item.count !== undefined && (
+                  <View style={styles.menuCount}><Text style={styles.menuCountText}>{item.count}</Text></View>
+                )}
                 <Text style={styles.menuArrow}>
                   {item.label === 'Change Password' && showChangePassword ? '⌄' : '›'}
                 </Text>
@@ -468,6 +429,9 @@ const styles = StyleSheet.create({
   topActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   coinPill: { backgroundColor: '#FFF3D6', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 },
   coinTxt: { fontSize: 12.5, fontWeight: '900', color: '#8A6D00' },
+  iconBtnAmber: { backgroundColor: '#FFF3DC' },
+  bellBadge: { position: 'absolute', top: -3, right: -3, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff' },
+  bellBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
   iconBtn: { width: 32, height: 32, borderRadius: 11, backgroundColor: L.blueSoft, alignItems: 'center', justifyContent: 'center' },
 
   // Heading + keep-learning pill
@@ -521,6 +485,12 @@ const styles = StyleSheet.create({
     borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, marginBottom: 8,
   },
   proBadgeText: { color: '#9A6B00', fontSize: 11, fontWeight: '700' },
+  xpMini: {
+    marginHorizontal: 16, marginTop: 12, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14,
+    backgroundColor: L.blueSoft, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+  },
+  xpMiniText: { flex: 1, color: L.ink, fontSize: 13.5, fontWeight: '800' },
+  xpMiniLink: { color: L.blue, fontSize: 12, fontWeight: '800' },
   // "Pro Member" + "Verified/Unverified" side by side (wraps on narrow phones).
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 },
   editProfileBtn: {
@@ -601,6 +571,8 @@ const styles = StyleSheet.create({
   },
   menuEmoji: { fontSize: 18 },
   menuLabel: { flex: 1, color: L.ink, fontSize: 14, fontWeight: '600' },
+  menuCount: { backgroundColor: L.amberSoft, borderRadius: 10, minWidth: 24, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center', marginRight: 6 },
+  menuCountText: { color: '#8A6D00', fontSize: 12, fontWeight: '800' },
   menuArrow: { color: L.sub, fontSize: 20 },
 
   // Change Password form

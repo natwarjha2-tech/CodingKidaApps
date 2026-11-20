@@ -28,10 +28,11 @@ interface FAQItem { question: string; answer: string }
 
 const faqItems: FAQItem[] = [
   { question: 'How do I enroll in a course?', answer: 'Go to Courses tab, select a course, and tap Enroll.' },
-  { question: 'How do I earn coins?', answer: 'You earn coins in several ways:\n\n🧠 Lesson quizzes (by rank):\n• Rank #1 → 10 coins + Super Master badge\n• Rank #2 → 7 coins + Master badge\n• Rank #3–10 → 5 coins + Pro badge\n(Coins are given once per lesson, on your first attempt.)\n\n🔥 Weekly Challenge: 50 coins on completing all your weekly coding challenges.\n\n🎁 Refer & Earn: your friend gets 50 coins when they apply your referral code, and you get 50 coins when they buy their first course.\n\n💡 Redeem: 100+ coins = a ₹ discount on your next course.' },
+  { question: 'How do I earn coins?', answer: 'You earn coins in several ways:\n\n🧠 Lesson quizzes (by rank, first attempt):\n• Rank #1 → 🥇 Quiz Gold + 10 coins\n• Rank #2 → 🥈 Quiz Silver + 7 coins\n• Rank #3–10 → 🥉 Quiz Bronze + 5 coins\n\n💻 Coding exercises (by who solves first):\n• 1st → 🥇 Coding Gold + 10 coins\n• 2nd → 🥈 Coding Silver + 7 coins\n• 3rd–10th → 🥉 Coding Bronze + 5 coins\n\n🔥 Weekly Coding Challenge (once a week):\n• 1st → 🏆 Weekly Champion + 15 coins\n• 2nd–3rd → 🎖️ Weekly Finalist + 10 coins\n• Everyone else who solves it → ✅ Weekly Solver + 5 coins\n\n🎁 Refer & Earn: your friend gets 50 coins when they apply your referral code, and you get 50 coins when they buy their first course.\n\n💡 Redeem: 100+ coins = a ₹ discount on your next course.' },
+  { question: 'What is XP and how do levels work?', answer: 'XP are learning points. You earn them by learning:\n\n🎬 Watch a lesson video to the end → +10 XP\n✅ Answer a quiz question correctly → +5 XP\n🧠 Finish a lesson quiz → +20 XP\n💻 Solve a coding exercise → +30 XP\n🔥 Solve the weekly challenge → +50 XP\n\nEvery 100 XP = 1 level up: Starter → Explorer → Builder → Coder → Pro Coder → Champion → Master → Legend.\nEach thing counts once, so watching the same video again does not add XP.' },
   { question: 'Can I download lessons for offline use?', answer: 'Yes — open a lesson and tap Download. Downloads expire after 30 days.' },
   { question: 'How do I track my progress?', answer: 'Open My Report or Student Progress from your Profile to see detailed progress.' },
-  { question: 'What are achievements?', answer: 'Rank Super-Master, Master, or Pro in quizzes to earn achievement badges.' },
+  { question: 'What are achievements?', answer: 'Badges you win: 🥇 Gold, 🥈 Silver or 🥉 Bronze for quizzes and coding exercises, and 🏆 Champion, 🎖️ Finalist or ✅ Solver for the weekly coding challenge.' },
 ];
 
 // 3 quick-help cards (mirror desktop) — each opens WhatsApp with a topic prefill.

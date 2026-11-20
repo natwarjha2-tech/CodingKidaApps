@@ -12,9 +12,9 @@ interface CoinRewardToastProps {
 
 // Badge label — matches desktop _showCoinRewardToast exactly
 function badgeLabel(badge?: string): string {
-  if (badge === 'super-master') return '🏆 Super Master';
-  if (badge === 'master') return '🥈 Master';
-  return '⭐ Pro';
+  if (badge === 'super-master') return '🥇 Quiz Gold';
+  if (badge === 'master') return '🥈 Quiz Silver';
+  return '🥉 Quiz Bronze';
 }
 
 /**

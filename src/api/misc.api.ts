@@ -13,6 +13,25 @@ export const leaderboardApi = {
   },
 };
 
+/** One row of a single-lesson leaderboard (quiz or coding exercises). */
+export interface LessonBoardRow {
+  rank: number; name: string; score: number; isCurrentUser: boolean;
+  correctCount?: number; totalQuestions?: number; timeSeconds?: number; // quiz
+  passed?: number; attempted?: number; totalExercises?: number;         // exercise
+}
+export interface LessonBoard {
+  success: boolean; type: 'quiz' | 'exercise';
+  leaderboard: LessonBoardRow[];
+  currentUserRank: { rank: number; score: number; totalStudents: number } | null;
+  totalStudents: number; totalQuestions?: number; totalExercises?: number;
+}
+export const lessonLeaderboardApi = {
+  get: (lessonId: string, type: 'quiz' | 'exercise') =>
+    apiClient
+      .get<LessonBoard>(`/api/leaderboard/lesson?lessonId=${encodeURIComponent(lessonId)}&type=${type}`)
+      .then((r) => r.data),
+};
+
 export const coinsApi = {
   get: () =>
     apiClient.get<CoinsData>('/api/coins').then((r) => r.data),
@@ -21,7 +40,7 @@ export const coinsApi = {
 export const achievementsApi = {
   get: () =>
     apiClient
-      .get<{ success: boolean; achievements: Achievement[] }>('/api/achievements')
+      .get<{ success: boolean; achievements: Achievement[] }>('/api/achievements?include=coding')
       .then((r) => r.data),
 };
 

@@ -25,15 +25,18 @@ export interface WeeklyCodingExercise {
 export interface WeeklyCodingInfo {
   success: boolean;
   week: { key: string; start: string; end: string };
+  /** Coins for the first solver ("up to"). */
   reward: number;
+  rewards?: { champion: number; finalist: number; solver: number };
+  xp?: number;
   completed: boolean;
   completedAt: string | null;
+  coinsEarned?: number;
+  medal?: { key: string; label: string; icon: string } | null;
   exercise: WeeklyCodingExercise | null;
 }
 
-export interface WeeklyCodingSubmitResult extends CodeSubmitResult {
-  coinsAwarded?: number;
-}
+export type WeeklyCodingSubmitResult = CodeSubmitResult;
 
 export interface WeeklyCodingBoardEntry {
   rank: number;

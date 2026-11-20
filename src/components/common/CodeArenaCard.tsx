@@ -8,6 +8,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'reac
 import { router, useFocusEffect } from 'expo-router';
 import { useAuthStore } from '@/store';
 import { scoreGet, currentStreak } from '@/components/coding/playgroundStore';
+import { useQuery } from '@tanstack/react-query';
+import { codingBadgesApi } from '@/api/xp.api';
 
 const VIOLET = '#5B2EF0';
 
@@ -15,6 +17,13 @@ export function CodeArenaCard() {
   const userId = useAuthStore((s) => s.user?.id);
   const [stats, setStats] = useState<{ points: number; coins: number; streak: number; solved: number } | null>(null);
   const float = useRef(new Animated.Value(0)).current;
+  // Coins earned ONLY from coding (exercises, weekly challenge, Code Arena) — from the server.
+  const { data: coding, refetch: refetchCoding } = useQuery({
+    queryKey: ['coding-badges', userId],
+    queryFn: () => codingBadgesApi.get(),
+    enabled: !!userId,
+    staleTime: 30_000,
+  });
 
   // Gentle floating animation on the 💻 tile.
   useEffect(() => {
@@ -29,12 +38,13 @@ export function CodeArenaCard() {
   }, [float]);
 
   useFocusEffect(useCallback(() => {
+    if (userId) refetchCoding();
     scoreGet(userId)
       .then((d) => setStats({
         points: d.totalPoints, coins: d.totalCoins, streak: currentStreak(d.submissionCalendar), solved: d.solvedProblems.length,
       }))
       .catch(() => {});
-  }, [userId]));
+  }, [userId])); // eslint-disable-line react-hooks/exhaustive-deps
 
   const translateY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] });
   const hasProgress = !!stats && (stats.solved > 0 || stats.streak > 0);
@@ -72,10 +82,12 @@ export function CodeArenaCard() {
 
       <View style={s.bottomRow}>
         <View style={s.statsCol}>
-          {hasProgress ? (
-            <Text style={s.stats} numberOfLines={1}>
-              ⭐ {stats!.points} pts   🔥 {stats!.streak}-day streak
+          {coding && (coding.codingCoins > 0 || coding.badges.length > 0) ? (
+            <Text style={s.stats} numberOfLines={2}>
+              🪙 {coding.codingCoins} coins from coding{coding.badges.length > 0 ? `   🏅 ${coding.badges.length} medal${coding.badges.length === 1 ? '' : 's'}` : ''}
             </Text>
+          ) : hasProgress ? (
+            <Text style={s.stats} numberOfLines={2}>🔥 {stats!.streak}-day coding streak. Solve problems to earn 🪙 coins!</Text>
           ) : (
             <Text style={s.stats} numberOfLines={2}>Solve your first challenge and earn 🪙 coins!</Text>
           )}

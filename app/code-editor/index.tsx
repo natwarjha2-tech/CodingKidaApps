@@ -18,6 +18,7 @@ import { CODING_LANGUAGES, getDefaultStarter, type CodingLangId } from '@/compon
 import {
   loadMyProblems, saveMyProblems, scoreGet, currentStreak, dayKey, type ScoreData,
 } from '@/components/coding/playgroundStore';
+import { codingBadgesApi, type CodingCoinRow, type CodingSubmissionRow } from '@/api/xp.api';
 import { Colors } from '@/theme';
 
 type Tab = 'all' | 'my' | 'score';
@@ -47,9 +48,18 @@ export default function CodeEditorHome() {
   );
 
   // Reload local data whenever the screen is focused (e.g. back from a solved problem).
+  // Coins and submissions from the server (exercises, weekly challenge, Code Arena).
+  const { data: serverCoding, refetch: refetchServerCoding } = useQuery({
+    queryKey: ['coding-badges', userId],
+    queryFn: () => codingBadgesApi.get(),
+    enabled: !!userId,
+    staleTime: 15_000,
+  });
+
   useFocusEffect(useCallback(() => {
     loadMyProblems(userId).then(setMyProblems);
     scoreGet(userId).then(setScore);
+    if (userId) refetchServerCoding();
   }, [userId]));
 
   const source = tab === 'my' ? myProblems : problems;
@@ -129,7 +139,7 @@ export default function CodeEditorHome() {
       )}
 
       {tab === 'score' ? (
-        <ScoreTab data={score} onRank={showLeaderboard} />
+        <ScoreTab data={score} server={serverCoding} onRank={showLeaderboard} />
       ) : tab === 'all' && isLoading ? (
         <View style={styles.centerFill}><ActivityIndicator color={Colors.primary} size="large" /></View>
       ) : tab === 'all' && isError && problems.length === 0 ? (
@@ -233,8 +243,15 @@ export default function CodeEditorHome() {
 }
 
 // ── Coding Score tab ─────────────────────────────────────────────────────────
-function ScoreTab({ data, onRank }: { data: ScoreData | null; onRank: (id: string, title: string) => void }) {
+function ScoreTab({ data, server, onRank }: {
+  data: ScoreData | null;
+  server?: { codingCoins: number; history?: CodingCoinRow[]; submissions?: CodingSubmissionRow[] };
+  onRank: (id: string, title: string) => void;
+}) {
   if (!data) return <View style={styles.centerFill}><ActivityIndicator color={Colors.primary} /></View>;
+  const history = server?.history ?? [];
+  const submissions = server?.submissions ?? [];
+  const bySource = (src: CodingCoinRow['source']) => history.filter((h) => h.source === src).reduce((s, h) => s + h.coins, 0);
   const streak = currentStreak(data.submissionCalendar);
   const progress = Math.min(streak, 7);
   const totalSubs = Object.values(data.submissionCalendar).reduce((s, v) => s + v, 0);
@@ -251,7 +268,12 @@ function ScoreTab({ data, onRank }: { data: ScoreData | null; onRank: (id: strin
       <View style={styles.scoreCard}>
         <Text style={styles.scoreNum}>{data.totalPoints}</Text>
         <Text style={styles.scoreLbl}>Total Points</Text>
-        <Text style={styles.scoreCoins}>🪙 {data.totalCoins} coins earned</Text>
+        <Text style={styles.scoreCoins}>🪙 {server ? server.codingCoins : data.totalCoins} coins earned from coding</Text>
+        {server && (
+          <Text style={styles.scoreSplit}>
+            Exercises {bySource('exercise')} · Weekly {bySource('weekly')} · Code Arena {bySource('arena')}
+          </Text>
+        )}
       </View>
 
       <View style={styles.streakCard}>
@@ -309,9 +331,45 @@ function ScoreTab({ data, onRank }: { data: ScoreData | null; onRank: (id: strin
           })}
         </>
       )}
+
+      {/* Coins from coding — every source, from the server */}
+      <Text style={[styles.solvedHead, { marginTop: 14 }]}>🪙 Coins earned from coding ({history.length})</Text>
+      {history.length === 0 ? (
+        <Text style={[styles.muted, { marginBottom: 8 }]}>No coding coins yet. Solve an exercise or this week's challenge!</Text>
+      ) : history.map((h, i) => (
+        <View key={`${h.at}-${i}`} style={styles.solvedCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.solvedTitle} numberOfLines={2}>{h.text}</Text>
+            <Text style={{ color: '#fbbf24', fontSize: 13, fontWeight: '800' }}>+{h.coins} 🪙</Text>
+          </View>
+          <Text style={[styles.solvedMeta, { marginTop: 4 }]}>
+            {h.source === 'weekly' ? 'Weekly Challenge' : h.source === 'exercise' ? 'Lesson exercise' : 'Code Arena'} · {fmtDate(h.at)}
+          </Text>
+        </View>
+      ))}
+
+      {/* All coding submissions (lesson exercises + weekly challenge) */}
+      <Text style={[styles.solvedHead, { marginTop: 14 }]}>📝 My submissions ({submissions.length})</Text>
+      {submissions.length === 0 ? (
+        <Text style={styles.muted}>No submissions yet.</Text>
+      ) : submissions.map((s) => (
+        <View key={s.id} style={styles.solvedCard}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.solvedTitle} numberOfLines={2}>{s.passed ? '✅' : '❌'} {s.title}</Text>
+            <Text style={{ color: s.passed ? '#22c55e' : '#f87171', fontSize: 11, fontWeight: '800' }}>
+              {s.passed ? 'PASSED' : 'NOT PASSED'}
+            </Text>
+          </View>
+          <Text style={[styles.solvedMeta, { marginTop: 4 }]}>
+            {[(s.language || '').toUpperCase(), (s.difficulty || '').toUpperCase(), fmtDate(s.at)].filter(Boolean).join(' · ')}
+          </Text>
+        </View>
+      ))}
     </ScrollView>
   );
 }
+
+const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
 // ── Add custom problem ───────────────────────────────────────────────────────
 function AddProblemModal({ visible, onClose, onAdd, categories }: {
@@ -436,6 +494,7 @@ const styles = StyleSheet.create({
   scoreCard: { padding: 18, borderRadius: 14, backgroundColor: 'rgba(108,71,255,0.12)', borderWidth: 1, borderColor: 'rgba(108,71,255,0.2)', alignItems: 'center', marginBottom: 12 },
   scoreNum: { color: '#fff', fontSize: 34, fontWeight: '800' },
   scoreLbl: { color: '#a78bfa', fontSize: 12, fontWeight: '600', marginBottom: 8 },
+  scoreSplit: { color: Colors.muted, fontSize: 11.5, fontWeight: '600', marginTop: 6, textAlign: 'center' },
   scoreCoins: { color: '#fbbf24', fontSize: 15, fontWeight: '700' },
   streakCard: { padding: 14, borderRadius: 12, backgroundColor: 'rgba(245,158,11,0.06)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.15)', marginBottom: 12 },
   streakTitle: { color: '#fbbf24', fontSize: 13, fontWeight: '700' },

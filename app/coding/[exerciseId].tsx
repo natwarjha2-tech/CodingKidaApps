@@ -333,11 +333,13 @@ export default function CodingEditorScreen() {
             queryClient.invalidateQueries({ queryKey: ['weekly-coding'] });
             queryClient.invalidateQueries({ queryKey: ['weekly-coding-board'] });
             queryClient.invalidateQueries({ queryKey: ['coins'] });
+            queryClient.invalidateQueries({ queryKey: ['xp'] });
+            queryClient.invalidateQueries({ queryKey: ['coding-badges'] }); queryClient.invalidateQueries({ queryKey: ['achievements'] });
             Alert.alert(
-              data.coinsAwarded ? `+${data.coinsAwarded} coins 🎉` : 'Solved ✅',
+              data.medal ? `${data.medal.icon} ${data.medal.label}!` : 'Solved ✅',
               data.coinsAwarded
-                ? "You solved this week's coding challenge! See where you are on the Weekly Challenge leaderboard."
-                : "You already got this week's coins. A new challenge comes every Monday.",
+                ? `You solved this week's coding challenge!\n+${data.coinsAwarded} coins · +${data.xpEarned ?? 50} XP 🎉\nSee where you are on the Weekly Challenge leaderboard.`
+                : "You already got this week's reward. A new challenge comes every Monday.",
             );
           }
         } else {
@@ -357,7 +359,24 @@ export default function CodingEditorScreen() {
       });
       if (data?.success) {
         setSubmitView({ kind: 'result', data });
-        if (data.passed) XPService.awardXP(`exercise-complete:${exercise.id}`, XP_REWARDS.exerciseComplete);
+        if (data.passed) {
+          XPService.awardXP(`exercise-complete:${exercise.id}`, XP_REWARDS.exerciseComplete);
+          // Coins are given by the server on the first solve: refresh them everywhere.
+          queryClient.invalidateQueries({ queryKey: ['coins'] });
+          queryClient.invalidateQueries({ queryKey: ['notifications'] });
+          queryClient.invalidateQueries({ queryKey: ['xp'] });
+          queryClient.invalidateQueries({ queryKey: ['coding-badges'] }); queryClient.invalidateQueries({ queryKey: ['achievements'] });
+          if (data.alreadyRewarded) {
+            Alert.alert('Solved ✅', 'All tests passed. You already got the reward for this exercise.');
+          } else if (data.medal) {
+            Alert.alert(
+              `${data.medal.icon} ${data.medal.label}!`,
+              `You are #${data.rank ?? '-'} to solve this exercise.\n+${data.coinsAwarded ?? 0} coins · +${data.xpEarned ?? 30} XP 🎉`,
+            );
+          } else if (data.xpEarned) {
+            Alert.alert('Solved ✅', `All tests passed! +${data.xpEarned} XP 🎉\n(The first 10 students to solve it also win a medal and coins.)`);
+          }
+        }
         fetchRank();
         loadHistory();
       } else {

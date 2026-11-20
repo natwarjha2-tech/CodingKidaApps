@@ -46,6 +46,15 @@ export interface CodeSubmitResult {
   time?: string | null;   // e.g. "1.234s"
   memory?: string | null; // e.g. "12 MB"
   message?: string;
+  /** Coins given for the first solve (0 if already solved before or rank > 50). */
+  coinsAwarded?: number;
+  /** Solve rank among all students (first solve only). */
+  rank?: number | null;
+  alreadyRewarded?: boolean;
+  /** 🥇 Coding Gold / 🥈 Silver / 🥉 Bronze for the first 10 solvers. */
+  medal?: { key: string; label: string; icon: string } | null;
+  /** XP for the first solve (+30). */
+  xpEarned?: number;
 }
 
 export interface SampleTestCase {
